@@ -633,7 +633,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    add_to_chat_href = f"https://t.me/{me.username}?startgroup=start"
+    add_to_chat_href = f"https://t.me/{me.username}?startgroup=true"
 
     if chat.type in ("group", "supergroup"):
         invite_row = get_or_create_group_invite_row_id(chat.id)
@@ -644,18 +644,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
+        link_pre = html.escape(f"{display_link} ❞", quote=False)
         text_html = (
-            "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n"
-            f'👉 <a href="{full_link}">{display_link}</a>\n'
-            "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
+            "Ваша ссылка:\n"
+            f"<pre>{link_pre}</pre>\n\n"
+            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
             "чтобы вам могли написать 💬\n\n"
-            "💬\n"
             "❗ <b>Отвечать на сообщения могут все участники чата</b>"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
             ]
         )
     else:
@@ -666,19 +667,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
+        link_pre = html.escape(f"{display_link} ❞", quote=False)
         text_html = (
-            "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n"
-            f'👉 <a href="{full_link}">{display_link}</a>\n'
-            "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать 💬\n\n"
-            "<b>Техническая поддержка</b>\n"
-            "Если у вас возник вопрос, жалоба или предложение, немедленно обратитесь к нам:\n"
-            f'<a href="https://t.me/{SUPPORT_USERNAME}">@{SUPPORT_USERNAME}</a>'
+            "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
+            "Ваша ссылка:\n"
+            f"<pre>{link_pre}</pre>\n\n"
+            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "чтобы вам могли написать 💬"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
             ]
         )
 
