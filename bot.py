@@ -884,8 +884,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
             "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "Разместите эту ссылку 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать\n\n"
+            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "<b>чтобы вам могли написать</b>\n\n"
             "❗ <b>Отвечать на сообщения могут все участники чата</b>"
         )
         keyboard = InlineKeyboardMarkup(
@@ -908,8 +908,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
             "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "Разместите эту ссылку 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать"
+            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "<b>чтобы вам могли написать</b>"
         )
         keyboard = InlineKeyboardMarkup(
             [
