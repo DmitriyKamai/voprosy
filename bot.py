@@ -1056,12 +1056,10 @@ def extract_text_content(msg) -> str | None:
 
 
 def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TEXT) -> str:
-    """Текст для получателя: 💬 заголовок, цитата с ❞, курсив «Свайпни» (как в макете)."""
+    """Текст для получателя: 💬, blockquote только с текстом, ❞ снаружи (без «цветных» кавычек в цитате)."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    tail = (
-        " ❞</blockquote>\n\n"
-        "<i>↪️ Свайпни для ответа.</i>"
-    )
+    # ❞ вне </blockquote> — иначе клиент красит его как часть blockquote (двойные «ёлочки»).
+    tail = "</blockquote>\n\n❞\n\n<i>↪️ Свайпни для ответа.</i>"
     open_bq = "<blockquote>"
     raw = (body or "").strip()
     if not raw:
@@ -1075,10 +1073,10 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
-    """Подпись к медиа: тот же макет, что и для текста — заголовок, blockquote + ❞, «Свайпни»."""
+    """Подпись к медиа: как текстовое уведомление; ❞ после blockquote, не внутри."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
     open_bq = "<blockquote>"
-    tail = " ❞</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
+    tail = "</blockquote>\n\n❞\n\n<i>↪️ Свайпни для ответа.</i>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
     overhead = len(head) + len(open_bq) + len(tail)
@@ -1233,7 +1231,7 @@ async def _deliver_anonymous(
                 plain = clip(
                     "💬 У тебя новое сообщение!\n\n"
                     + (msg.text or "")
-                    + "\n\n↪️ Свайпни для ответа.",
+                    + "\n\n❞\n\n↪️ Свайпни для ответа.",
                     MAX_TEXT,
                 )
                 sent = await bot.send_message(
@@ -1272,7 +1270,7 @@ async def _deliver_anonymous(
                     plain = clip(
                         "💬 У тебя новое сообщение!\n\n"
                         + ((msg.caption or "").strip() or "📎")
-                        + "\n\n↪️ Свайпни для ответа.",
+                        + "\n\n❞\n\n↪️ Свайпни для ответа.",
                         MAX_CAPTION,
                     )
                     r2 = await copied.reply_text(plain, reply_markup=markup)
