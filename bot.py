@@ -776,11 +776,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
-        link_line = html.escape(f"{display_link} ❞", quote=False)
+        href_esc = html.escape(full_link, quote=True)
+        display_esc = html.escape(display_link, quote=False)
+        link_block = (
+            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>\n\n❞"
+        )
         text_html = (
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
             "Ваша ссылка:\n"
-            f"<blockquote><code>{link_line}</code></blockquote>\n\n"
+            f"{link_block}\n\n"
             "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
             "чтобы вам могли написать 💬\n\n"
             "❗ <b>Отвечать на сообщения могут все участники чата</b>"
@@ -799,11 +803,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
-        link_line = html.escape(f"{display_link} ❞", quote=False)
+        href_esc = html.escape(full_link, quote=True)
+        display_esc = html.escape(display_link, quote=False)
+        link_block = (
+            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>\n\n❞"
+        )
         text_html = (
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
             "Ваша ссылка:\n"
-            f"<blockquote><code>{link_line}</code></blockquote>\n\n"
+            f"{link_block}\n\n"
             "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
             "чтобы вам могли написать 💬"
         )
