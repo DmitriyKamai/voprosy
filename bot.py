@@ -26,6 +26,7 @@ from telegram import (
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     InlineQueryHandler,
@@ -50,6 +51,26 @@ SUPPORT_USERNAME = _support_raw or "quesupport"
 
 MAX_CAPTION = 3500
 MAX_TEXT = 4000
+
+CB_CANCEL_ANON = "cancel_anon"
+
+TEXT_AFTER_USER_LINK_HTML = (
+    "🚀 Здесь можно отправить <b>анонимное сообщение</b> человеку, который опубликовал эту ссылку\n\n"
+    "🖊 <b>Напишите сюда всё, что хотите ему передать</b>, и через несколько секунд он получит ваше сообщение, "
+    "но не будет знать от кого\n\n"
+    "Отправить можно фото, видео, 💬 текст, 🔊 голосовые, 📷 видеосообщения (кружки), а также ✨ стикеры"
+)
+
+TEXT_AFTER_GROUP_LINK_HTML = (
+    "🚀 Здесь можно отправить <b>анонимное сообщение</b> в чат, ссылку на который вы открыли\n\n"
+    "🖊 <b>Напишите сюда всё, что хотите передать</b>, и через несколько секунд участники увидят сообщение "
+    "без указания отправителя\n\n"
+    "Отправить можно фото, видео, 💬 текст, 🔊 голосовые, 📷 видеосообщения (кружки), а также ✨ стикеры"
+)
+
+KEYBOARD_CANCEL_ANON = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("✖️ Отменить", callback_data=CB_CANCEL_ANON)]]
+)
 
 # Москва = UTC+3 (без летнего времени с 2014 г.; без зависимости tzdata на Windows)
 MSK_TZ = timezone(timedelta(hours=3), name="MSK")
@@ -577,8 +598,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data["anon_target_user_id"] = tid
                 context.user_data.pop("anon_target_chat_id", None)
                 await msg.reply_text(
-                    "Напишите сообщение — оно уйдёт анонимно человеку, который дал вам ссылку.",
-                    reply_markup=ReplyKeyboardRemove(),
+                    TEXT_AFTER_USER_LINK_HTML,
+                    reply_markup=KEYBOARD_CANCEL_ANON,
+                    parse_mode=ParseMode.HTML,
                 )
                 return
             if kind == "group_invite":
@@ -593,8 +615,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data["anon_target_chat_id"] = g_chat_id
                 context.user_data.pop("anon_target_user_id", None)
                 await msg.reply_text(
-                    "Напишите сообщение — оно будет отправлено анонимно в тот чат, чью ссылку вы открыли.",
-                    reply_markup=ReplyKeyboardRemove(),
+                    TEXT_AFTER_GROUP_LINK_HTML,
+                    reply_markup=KEYBOARD_CANCEL_ANON,
+                    parse_mode=ParseMode.HTML,
                 )
                 return
 
@@ -665,6 +688,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+
+
+async def cancel_anon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отмена режима отправки анонимного сообщения по кнопке «Отменить»."""
+    q = update.callback_query
+    if not q or not q.message:
+        return
+    if q.data != CB_CANCEL_ANON:
+        return
+    await q.answer()
+    context.user_data.pop("anon_target_user_id", None)
+    context.user_data.pop("anon_target_chat_id", None)
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        logger.exception("Не удалось убрать inline-клавиатуру после отмены")
+    await q.message.reply_text("Режим анонимной отправки отключён.")
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1037,6 +1077,7 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(cancel_anon_callback, pattern=f"^{CB_CANCEL_ANON}$"))
     app.add_handler(InlineQueryHandler(inline_share))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("issue", issue_cmd))
