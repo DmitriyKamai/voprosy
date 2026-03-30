@@ -51,6 +51,8 @@ SUPPORT_USERNAME = _support_raw or "quesupport"
 
 MAX_CAPTION = 3500
 MAX_TEXT = 4000
+# Лимит подписи к медиа в Telegram Bot API
+TELEGRAM_MEDIA_CAPTION_MAX = 1024
 
 CB_CANCEL_ANON = "cancel_anon"
 
@@ -900,6 +902,90 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
     return head + open_bq + safe + tail
 
 
+def format_anonymous_media_caption_html(body: str | None) -> str:
+    """Подпись к фото/видео и т.д.: жирный заголовок, текст, курсив «Свайпни» (как в макете канала)."""
+    head = "<b>💬 У тебя новое сообщение!</b>\n\n"
+    foot = "\n\n<i>↪️ Свайпни для ответа.</i>"
+    raw = (body or "").strip()
+    mid = html.escape(raw, quote=False) if raw else "📎"
+    overhead = len(head) + len(foot)
+    max_mid = max(0, TELEGRAM_MEDIA_CAPTION_MAX - overhead - 40)
+    if len(mid) > max_mid:
+        mid = clip(mid, max_mid)
+    return head + mid + foot
+
+
+async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup | None:
+    """Кнопка «Прокомментировать» — открывает бота в личке."""
+    me = await bot.get_me()
+    if not me.username:
+        return None
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🗨️ Прокомментировать", url=f"https://t.me/{me.username}")]]
+    )
+
+
+async def _try_send_anonymous_media_with_caption(
+    bot,
+    dest: int,
+    msg,
+    caption: str,
+    reply_markup: InlineKeyboardMarkup | None,
+) -> bool:
+    """Одно медиа + подпись + клавиатура; для стикера — стикер и отдельное сообщение с текстом."""
+    kw: dict[str, Any] = {
+        "chat_id": dest,
+        "caption": caption,
+        "parse_mode": ParseMode.HTML,
+        "reply_markup": reply_markup,
+    }
+    try:
+        if msg.photo:
+            await bot.send_photo(photo=msg.photo[-1].file_id, **kw)
+            return True
+        if msg.video:
+            await bot.send_video(video=msg.video.file_id, **kw)
+            return True
+        if msg.animation:
+            await bot.send_animation(animation=msg.animation.file_id, **kw)
+            return True
+        if msg.document:
+            await bot.send_document(document=msg.document.file_id, **kw)
+            return True
+        if msg.voice:
+            await bot.send_voice(voice=msg.voice.file_id, **kw)
+            return True
+        if msg.audio:
+            await bot.send_audio(audio=msg.audio.file_id, **kw)
+            return True
+        if msg.video_note:
+            sent = await bot.send_video_note(chat_id=dest, video_note=msg.video_note.file_id)
+            await bot.send_message(
+                chat_id=dest,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
+                reply_to_message_id=sent.message_id,
+            )
+            return True
+        if msg.sticker:
+            sent = await bot.send_sticker(chat_id=dest, sticker=msg.sticker.file_id)
+            await bot.send_message(
+                chat_id=dest,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
+                reply_to_message_id=sent.message_id,
+            )
+            return True
+    except Exception:
+        logger.exception(
+            "Прямая отправка анонимного медиа с подписью не удалась dest=%s",
+            dest,
+        )
+    return False
+
+
 async def _deliver_anonymous(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -971,32 +1057,38 @@ async def _deliver_anonymous(
                 await bot.send_message(chat_id=dest, text=plain)
             delivered = True
         else:
-            copied = await bot.copy_message(
-                chat_id=dest,
-                from_chat_id=chat.id,
-                message_id=msg.message_id,
+            markup = await _anon_recipient_markup(bot)
+            cap_html = format_anonymous_media_caption_html(msg.caption)
+            sent_ok = await _try_send_anonymous_media_with_caption(
+                bot, dest, msg, cap_html, markup
             )
-            delivered = True
-            caption_body = msg.caption if msg.caption else None
-            try:
-                await copied.reply_text(
-                    format_anonymous_recipient_html(caption_body, max_total=MAX_CAPTION),
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                logger.exception(
-                    "Подпись-шаблон к анонимному медиа не отправилась (само медиа уже у получателя) dest=%s",
-                    dest,
+            if not sent_ok:
+                copied = await bot.copy_message(
+                    chat_id=dest,
+                    from_chat_id=chat.id,
+                    message_id=msg.message_id,
                 )
                 try:
                     await copied.reply_text(
-                        "🗣️ У тебя новое сообщение.\n\n↪️ Свайпни для ответа."
+                        cap_html,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=markup,
                     )
                 except Exception:
                     logger.exception(
-                        "Не удалось отправить запасную подпись к анонимному медиа dest=%s",
+                        "Запасной ответ с подписью к copy_message не прошёл dest=%s",
                         dest,
                     )
+                    plain = (
+                        "💬 У тебя новое сообщение!\n\n"
+                        + ((msg.caption or "").strip() or "📎")
+                        + "\n\n↪️ Свайпни для ответа."
+                    )
+                    await copied.reply_text(
+                        clip(plain, MAX_CAPTION),
+                        reply_markup=markup,
+                    )
+            delivered = True
     except Exception:
         logger.exception(
             "Не удалось доставить анонимное сообщение dest=%s user=%s chat=%s",
