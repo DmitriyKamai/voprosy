@@ -61,6 +61,7 @@ TELEGRAM_MEDIA_CAPTION_MAX = 1024
 CB_CANCEL_ANON = "cancel_anon"
 CB_ANON_SENT_WRITE_MORE = "anon_wm"
 CB_ANON_SENT_DELETE_PREFIX = "anon_del:"
+CB_ANON_REPORT = "anon_report"
 
 TEXT_AFTER_USER_LINK_HTML = (
     "<b>🚀 Анонимное сообщение</b>\n"
@@ -937,6 +938,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def anon_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Жалоба на аноним: только всплывающее уведомление (show_alert)."""
+    q = update.callback_query
+    if not q or q.data != CB_ANON_REPORT:
+        return
+    await q.answer(
+        "Спасибо! Ваша жалоба отправлена на рассмотрение.",
+        show_alert=True,
+    )
+
+
 async def cancel_anon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отмена режима отправки анонимного сообщения по кнопке «Отменить»."""
     q = update.callback_query
@@ -1220,10 +1232,9 @@ def format_anonymous_media_caption_html(body: str | None) -> str:
 
 
 def _anon_recipient_markup() -> InlineKeyboardMarkup:
-    """Кнопка «Пожаловаться» в поддержку."""
-    sup = SUPPORT_USERNAME.lstrip("@")
+    """Кнопка «Пожаловаться»: по клику — нативный alert, без перехода в чат."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🚮 Пожаловаться", url=f"https://t.me/{sup}")]]
+        [[InlineKeyboardButton("🛡️ Пожаловаться", callback_data=CB_ANON_REPORT)]]
     )
 
 
@@ -1627,6 +1638,7 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CallbackQueryHandler(anon_report_callback, pattern=f"^{CB_ANON_REPORT}$"))
     app.add_handler(CallbackQueryHandler(cancel_anon_callback, pattern=f"^{CB_CANCEL_ANON}$"))
     app.add_handler(
         CallbackQueryHandler(anon_sent_write_more_callback, pattern=f"^{CB_ANON_SENT_WRITE_MORE}$")
