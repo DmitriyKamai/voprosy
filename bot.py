@@ -216,7 +216,16 @@ def get_or_create_user_link_token(owner_user_id: int) -> str:
             (owner_user_id,),
         ).fetchone()
         if row:
-            return str(row[0])
+            tok = str(row[0])
+            # В БД не должно быть «токена» из одних цифр — в ссылке он выглядит как user id.
+            if tok.isdigit():
+                conn.execute(
+                    "DELETE FROM user_link_tokens WHERE owner_user_id = ?",
+                    (owner_user_id,),
+                )
+                conn.commit()
+            else:
+                return tok
         for _ in range(32):
             tok = _random_user_link_token()
             try:
@@ -360,8 +369,8 @@ def format_owner_reply_for_sender_html(
     o = clip(original_anon_snippet.strip() or "📎", 900)
     body = clip(owner_reply_text, MAX_TEXT - 400)
     return (
-        f"<blockquote><b>{html.escape(owner_name)}</b>\n"
-        f"{html.escape(o)}</blockquote>\n\n"
+        f"<b>{html.escape(owner_name)}</b>\n"
+        f"<blockquote>{html.escape(o)}</blockquote>\n\n"
         f"{html.escape(body)}"
     )
 
@@ -771,16 +780,26 @@ def clip(s: str, limit: int) -> str:
     return s[: limit - 20] + "\n… (обрезано)"
 
 
+def html_personal_link_block(full_link: str, display_link: str) -> str:
+    """Визуальная цитата со строкой ссылки + отдельная ссылка (вложенный <a> в blockquote у API часто ломает разметку)."""
+    href_esc = html.escape(full_link, quote=True)
+    display_esc = html.escape(display_link, quote=False)
+    return (
+        f"<blockquote>{display_esc}</blockquote>\n"
+        f"<a href=\"{href_esc}\">🔗 Открыть ссылку</a>"
+    )
+
+
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
-    """qTOKEN → владелец (токен в БД или легаси qЦИФРЫ); s456 → id строки group_invites."""
+    """qTOKEN → владелец (сначала токен в БД, иначе легаси qЦИФРЫ); s456 → id строки group_invites."""
     p = arg.strip()
     if len(p) >= 2 and p[0] == "q":
         rest = p[1:]
-        if rest.isdigit():
-            return ("user", int(rest))
         uid = resolve_user_link_token(rest)
         if uid is not None:
             return ("user", uid)
+        if rest.isdigit():
+            return ("user", int(rest))
         return None
     if len(p) >= 2 and p[0] == "s" and p[1:].isdigit():
         return ("group_invite", int(p[1:]))
@@ -850,11 +869,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
-        href_esc = html.escape(full_link, quote=True)
-        display_esc = html.escape(display_link, quote=False)
-        link_block = (
-            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>"
-        )
+        link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
             "Ваша ссылка:\n"
@@ -878,11 +893,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
-        href_esc = html.escape(full_link, quote=True)
-        display_esc = html.escape(display_link, quote=False)
-        link_block = (
-            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>"
-        )
+        link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
             "Ваша ссылка:\n"
@@ -995,19 +1006,20 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "https://t.me/share/url?"
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
+        pop_esc = html.escape(pop, quote=False)
         text_html = (
             "<b>📌 Статистика группы</b>\n\n"
             "➖ <b>Сегодня:</b>\n"
             "<blockquote>"
-            f"💬 <b>Сообщений в чат:</b> {m_today}\n"
-            f"👀 <b>Переходов по ссылке:</b> {c_today}\n"
-            f"⭐ <b>Популярность:</b> {pop}"
+            f"💬 Сообщений в чат: {m_today}\n"
+            f"👀 Переходов по ссылке: {c_today}\n"
+            f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
             "➖ <b>За всё время:</b>\n"
             "<blockquote>"
-            f"💬 <b>Сообщений в чат:</b> {m_all}\n"
-            f"👀 <b>Переходов по ссылке:</b> {c_all}\n"
-            f"⭐ <b>Популярность:</b> {pop}"
+            f"💬 Сообщений в чат: {m_all}\n"
+            f"👀 Переходов по ссылке: {c_all}\n"
+            f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
             "Чтобы поднять ⭐ уровень популярности, делитесь ссылкой на анонимные сообщения в этот чат:\n"
             f'👉 <a href="{full_link}">{display_link}</a>'
@@ -1030,19 +1042,20 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
 
+        pop_esc = html.escape(pop, quote=False)
         text_html = (
             "<b>📌 Статистика профиля</b>\n\n"
             "➖ <b>Сегодня:</b>\n"
             "<blockquote>"
-            f"💬 <b>Сообщений:</b> {m_today}\n"
-            f"👀 <b>Переходов по ссылке:</b> {c_today}\n"
-            f"⭐ <b>Популярность:</b> {pop}"
+            f"💬 Сообщений: {m_today}\n"
+            f"👀 Переходов по ссылке: {c_today}\n"
+            f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
             "➖ <b>За всё время:</b>\n"
             "<blockquote>"
-            f"💬 <b>Сообщений:</b> {m_all}\n"
-            f"👀 <b>Переходов по ссылке:</b> {c_all}\n"
-            f"⭐ <b>Популярность:</b> {pop}"
+            f"💬 Сообщений: {m_all}\n"
+            f"👀 Переходов по ссылке: {c_all}\n"
+            f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
             "Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:\n"
             f'👉 <a href="{full_link}">{display_link}</a>'
@@ -1156,17 +1169,16 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
-    """Подпись к медиа: тот же макет, что и для текста."""
+    """Подпись к медиа: в подписях blockquote у части клиентов не рисуется — кавычки + жирный заголовок."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    open_bq = "<blockquote>"
-    tail = "</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
+    tail = "\n\n<i>↪️ Свайпни для ответа.</i>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
-    overhead = len(head) + len(open_bq) + len(tail)
+    overhead = len(head) + len(tail) + 8
     max_mid = max(0, TELEGRAM_MEDIA_CAPTION_MAX - overhead - 40)
     if len(mid) > max_mid:
         mid = clip(mid, max_mid)
-    return head + open_bq + mid + tail
+    return head + "❝\n" + mid + "\n❞" + tail
 
 
 async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup:
@@ -1312,9 +1324,9 @@ async def _deliver_anonymous(
                     dest,
                 )
                 plain = clip(
-                    "💬 У тебя новое сообщение!\n\n"
+                    "💬 У тебя новое сообщение!\n\n❝\n"
                     + (msg.text or "")
-                    + "\n\n↪️ Свайпни для ответа.",
+                    + "\n❞\n\n↪️ Свайпни для ответа.",
                     MAX_TEXT,
                 )
                 sent = await bot.send_message(
@@ -1351,9 +1363,9 @@ async def _deliver_anonymous(
                         dest,
                     )
                     plain = clip(
-                        "💬 У тебя новое сообщение!\n\n"
+                        "💬 У тебя новое сообщение!\n\n❝\n"
                         + ((msg.caption or "").strip() or "📎")
-                        + "\n\n↪️ Свайпни для ответа.",
+                        + "\n❞\n\n↪️ Свайпни для ответа.",
                         MAX_CAPTION,
                     )
                     r2 = await copied.reply_text(plain, reply_markup=markup)
@@ -1465,8 +1477,8 @@ async def handle_owner_reply_to_anonymous_sender(
             )
         else:
             header = (
-                f"<blockquote><b>{html.escape(owner_name)}</b>\n"
-                f"{html.escape(clip(original, 900))}</blockquote>"
+                f"<b>{html.escape(owner_name)}</b>\n"
+                f"<blockquote>{html.escape(clip(original, 900))}</blockquote>"
             )
             sent = await bot.send_message(
                 chat_id=anon_sender_user_id,
