@@ -885,13 +885,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Ваша ссылка:\n"
             f"{link_block}\n\n"
             "Разместите эту ссылку 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать 💬\n\n"
+            "чтобы вам могли написать\n\n"
             "❗ <b>Отвечать на сообщения могут все участники чата</b>"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗️", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
             ]
         )
     else:
@@ -913,8 +913,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗️", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
             ]
         )
 
@@ -1017,7 +1017,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
         pop_esc = html.escape(pop, quote=False)
-        link_block = html_personal_link_block(full_link, display_link)
+        href_esc = html.escape(full_link, quote=True)
+        display_esc = html.escape(display_link, quote=False)
         text_html = (
             "<b>📌 Статистика группы</b>\n\n"
             "➖ Сегодня:\n"
@@ -1033,9 +1034,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"⭐ <i>Популярность:</i> {pop_esc}"
             "</blockquote>\n\n"
             "<i>Чтобы поднять ⭐ уровень популярности, делитесь ссылкой на анонимные сообщения в этот чат:</i>\n\n"
-            "Ваша ссылка\n"
-            f"{link_block}\n\n"
-            "<i>Чем чаще ей делятся, тем выше ⭐ популярность чата.</i>"
+            f"<i>👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
         )
     else:
         uid = user.id
@@ -1056,7 +1055,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         pop_esc = html.escape(pop, quote=False)
-        link_block = html_personal_link_block(full_link, display_link)
+        href_esc = html.escape(full_link, quote=True)
+        display_esc = html.escape(display_link, quote=False)
         text_html = (
             "<b>📌 Статистика профиля</b>\n\n"
             "➖ Сегодня:\n"
@@ -1072,13 +1072,11 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"⭐ <i>Популярность:</i> {pop_esc}"
             "</blockquote>\n\n"
             "<i>Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:</i>\n\n"
-            "Ваша ссылка\n"
-            f"{link_block}\n\n"
-            "<i>Делитесь ею чаще — растёт ⭐ популярность профиля.</i>"
+            f"<i>👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
         )
 
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)]]
+        [[InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)]]
     )
     await msg.reply_text(
         text_html,
@@ -1099,7 +1097,7 @@ async def issue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not body:
         await msg.reply_text(
             "💡 Здесь вы можете предложить свою идею по улучшению нашего бота\n\n"
-            "Напишите “<code>/issue</code> <code>Текст...</code>”, чтобы отправить нам сообщение.",
+            "Напишите <code>/issue</code> <code>Текст...</code>, чтобы отправить нам сообщение.",
             parse_mode=ParseMode.HTML,
         )
         return
