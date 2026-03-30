@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path(__file__).resolve().parent / "podslushano.db"
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_USER_ID_RAW = os.environ.get("ADMIN_USER_ID", "").strip()
+_support_raw = os.environ.get("SUPPORT_USERNAME", "quesupport").strip().lstrip("@")
+SUPPORT_USERNAME = _support_raw or "quesupport"
 
 MAX_CAPTION = 3500
 MAX_TEXT = 4000
@@ -438,7 +440,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n"
         f'👉 <a href="{full_link}">{display_link}</a>\n'
         "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
-        "чтобы вам могли написать 💬"
+        "чтобы вам могли написать 💬\n\n"
+        "<b>Техническая поддержка</b>\n"
+        "Если у вас возник вопрос, жалоба или предложение, немедленно обратитесь к нам:\n"
+        f'<a href="https://t.me/{SUPPORT_USERNAME}">@{SUPPORT_USERNAME}</a>'
     )
     keyboard = InlineKeyboardMarkup(
         [
