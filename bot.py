@@ -157,6 +157,23 @@ def format_message_body_for_admin(msg, ctype: str) -> str:
     return labels.get(ctype, f"Вложение ({ctype})")
 
 
+def format_person_lines(label: str, u: dict[str, Any]) -> str:
+    """Блок «Имя / Username / ID»; если label пустой — только три строки профиля."""
+    name = _user_display_name(u)
+    uname = u.get("username")
+    username_line = f"@{uname}" if uname else "—"
+    uid = u.get("id")
+    id_line = str(uid) if uid is not None else "—"
+    core = (
+        f"Имя: {name}\n"
+        f"Username: {username_line}\n"
+        f"ID: {id_line}\n"
+    )
+    if label:
+        return f"{label}\n{core}"
+    return core
+
+
 def build_admin_notification_text(
     row_id: int,
     ctype: str,
@@ -164,20 +181,76 @@ def build_admin_notification_text(
     msg,
 ) -> str:
     u = identifiers.get("user") or {}
-    name = _user_display_name(u)
-    uname = u.get("username")
-    username_line = f"@{uname}" if uname else "—"
-    uid = u.get("id")
-    id_line = str(uid) if uid is not None else "—"
     body = format_message_body_for_admin(msg, ctype)
     return (
         f"📥 Подслушано — запись #{row_id}\n"
         f"Тип: {ctype}\n\n"
-        f"Имя: {name}\n"
-        f"Username: {username_line}\n"
-        f"ID: {id_line}\n\n"
+        f"{format_person_lines('', u)}"
         f"Сообщение:\n{body}"
     )
+
+
+def build_anonymous_admin_notification_text(
+    row_id: int,
+    ctype: str,
+    owner: dict[str, Any],
+    sender: dict[str, Any],
+    msg,
+) -> str:
+    """Уведомление админу: владелец ссылки, отправитель, текст сообщения."""
+    body = format_message_body_for_admin(msg, ctype)
+    return (
+        f"📥 Подслушано — аноним по ссылке, запись #{row_id}\n"
+        f"Тип: {ctype}\n\n"
+        f"{format_person_lines('Владелец ссылки:', owner)}"
+        f"\n"
+        f"{format_person_lines('Отправитель:', sender)}"
+        f"Сообщение:\n{body}"
+    )
+
+
+async def _owner_dict_from_chat(bot, owner_user_id: int) -> dict[str, Any]:
+    """Профиль владельца ссылки по user_id (нужен хотя бы один /start у бота)."""
+    try:
+        ch = await bot.get_chat(owner_user_id)
+        d = ch.to_dict()
+        return {
+            "id": d.get("id"),
+            "first_name": d.get("first_name"),
+            "last_name": d.get("last_name"),
+            "username": d.get("username"),
+        }
+    except Exception:
+        logger.warning("Не удалось get_chat для владельца ссылки id=%s", owner_user_id)
+        return {
+            "id": owner_user_id,
+            "first_name": None,
+            "last_name": None,
+            "username": None,
+        }
+
+
+async def send_admin_message_copy(
+    bot,
+    admin_id: int,
+    source_chat_id: int,
+    msg,
+    admin_text: str,
+) -> None:
+    """Копия сообщения админу + подпись с данными."""
+    try:
+        if msg.text and not msg.photo:
+            await bot.send_message(chat_id=admin_id, text=clip(admin_text, MAX_TEXT))
+        else:
+            copied = await bot.copy_message(
+                chat_id=admin_id,
+                from_chat_id=source_chat_id,
+                message_id=msg.message_id,
+            )
+            await copied.reply_text(clip(admin_text, MAX_CAPTION))
+    except Exception:
+        logger.exception("Не удалось отправить копию админу основным способом")
+        await bot.send_message(chat_id=admin_id, text=clip(admin_text, MAX_TEXT))
 
 
 def save_submission(
@@ -319,7 +392,7 @@ async def _deliver_anonymous_message(
     context: ContextTypes.DEFAULT_TYPE,
     recipient_id: int,
 ) -> None:
-    """Доставка получателю без раскрытия отправителя в тексте."""
+    """Доставка получателю без раскрытия отправителя; копия и карточка — админу."""
     msg = update.effective_message
     if not msg or not update.effective_user:
         return
@@ -331,7 +404,7 @@ async def _deliver_anonymous_message(
     text_part = extract_text_content(msg)
     raw_msg = _to_dict(msg)
 
-    save_submission(
+    row_id = save_submission(
         user_id=update.effective_user.id,
         chat_id=chat.id,
         message_id=msg.message_id,
@@ -342,6 +415,13 @@ async def _deliver_anonymous_message(
         recipient_user_id=recipient_id,
     )
 
+    owner_dict = await _owner_dict_from_chat(bot, recipient_id)
+    sender_dict = identifiers.get("user") or {}
+    admin_text = build_anonymous_admin_notification_text(
+        row_id, ctype, owner_dict, sender_dict, msg
+    )
+
+    delivered = False
     try:
         if msg.text and not msg.photo:
             await bot.send_message(
@@ -358,15 +438,20 @@ async def _deliver_anonymous_message(
             if msg.caption:
                 tail += "\n\n" + msg.caption
             await copied.reply_text(clip(tail, MAX_CAPTION))
+        delivered = True
     except Exception:
         logger.exception("Не удалось доставить анонимное сообщение user_id=%s", recipient_id)
         await msg.reply_text(
             "Не удалось доставить. Часто так бывает, если получатель ещё ни разу не нажимал "
             "/start у этого бота — пусть откроет бота и нажмёт «Start»."
         )
-        return
 
-    await msg.reply_text("Отправлено.")
+    admin_id = _admin_user_id()
+    if admin_id is not None:
+        await send_admin_message_copy(bot, admin_id, chat.id, msg, admin_text)
+
+    if delivered:
+        await msg.reply_text("Отправлено.")
 
 
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -409,22 +494,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     bot = context.bot
     chat = update.effective_chat
 
-    try:
-        if msg.text and not msg.photo:
-            await bot.send_message(
-                chat_id=admin_id,
-                text=clip(admin_text, MAX_TEXT),
-            )
-        else:
-            copied = await bot.copy_message(
-                chat_id=admin_id,
-                from_chat_id=chat.id,
-                message_id=msg.message_id,
-            )
-            await copied.reply_text(clip(admin_text, MAX_CAPTION))
-    except Exception:
-        logger.exception("Не удалось отправить админу; дублируем одним текстом")
-        await bot.send_message(chat_id=admin_id, text=clip(admin_text, MAX_TEXT))
+    await send_admin_message_copy(bot, admin_id, chat.id, msg, admin_text)
 
     await msg.reply_text("Сообщение получено и передано.")
 
