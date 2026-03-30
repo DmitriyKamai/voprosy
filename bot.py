@@ -778,8 +778,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         href_esc = html.escape(full_link, quote=True)
         display_esc = html.escape(display_link, quote=False)
+        # ❞ сразу после ссылки внутри blockquote — одна плашка как в макете, без отдельной строки с кавычкой
         link_block = (
-            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>\n\n❞"
+            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a>❞</blockquote>"
         )
         text_html = (
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
@@ -806,7 +807,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         href_esc = html.escape(full_link, quote=True)
         display_esc = html.escape(display_link, quote=False)
         link_block = (
-            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>\n\n❞"
+            f"<blockquote><a href=\"{href_esc}\">{display_esc}</a>❞</blockquote>"
         )
         text_html = (
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
