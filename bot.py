@@ -63,17 +63,21 @@ CB_ANON_SENT_WRITE_MORE = "anon_wm"
 CB_ANON_SENT_DELETE_PREFIX = "anon_del:"
 
 TEXT_AFTER_USER_LINK_HTML = (
-    "🚀 Здесь можно отправить <b>анонимное сообщение</b> человеку, который опубликовал эту ссылку\n\n"
-    "🖊 <b>Напишите сюда всё, что хотите ему передать</b>, и через несколько секунд он получит ваше сообщение, "
-    "но не будет знать от кого\n\n"
-    "Отправить можно фото, видео, 💬 текст, 🔊 голосовые, 📷 видеосообщения (кружки), а также ✨ стикеры"
+    "<b>🚀 Анонимное сообщение</b>\n"
+    "Вы пишете человеку, который выложил эту ссылку.\n\n"
+    "<b>🖊 Как отправить</b>\n"
+    "Напишите сюда текст или пришлите медиа — получатель увидит сообщение, но не от кого оно.\n\n"
+    "<b>📎 Можно отправить</b>\n"
+    "фото, видео, текст, голосовые, видеосообщения (кружки), стикеры"
 )
 
 TEXT_AFTER_GROUP_LINK_HTML = (
-    "🚀 Здесь можно отправить <b>анонимное сообщение</b> в чат, ссылку на который вы открыли\n\n"
-    "🖊 <b>Напишите сюда всё, что хотите передать</b>, и через несколько секунд участники увидят сообщение "
-    "без указания отправителя\n\n"
-    "Отправить можно фото, видео, 💬 текст, 🔊 голосовые, 📷 видеосообщения (кружки), а также ✨ стикеры"
+    "<b>🚀 Анонимное сообщение в чат</b>\n"
+    "Сообщение увидят участники чата, ссылку на который вы открыли.\n\n"
+    "<b>🖊 Как отправить</b>\n"
+    "Напишите сюда текст или пришлите медиа — автор будет скрыт.\n\n"
+    "<b>📎 Можно отправить</b>\n"
+    "фото, видео, текст, голосовые, видеосообщения (кружки), стикеры"
 )
 
 KEYBOARD_CANCEL_ANON = InlineKeyboardMarkup(
@@ -790,13 +794,10 @@ def clip(s: str, limit: int) -> str:
 
 
 def html_personal_link_block(full_link: str, display_link: str) -> str:
-    """Визуальная цитата со строкой ссылки + отдельная ссылка (вложенный <a> в blockquote у API часто ломает разметку)."""
+    """Единый блок: цитата Telegram + кликабельная строка t.me/… (как в /start и /stats)."""
     href_esc = html.escape(full_link, quote=True)
     display_esc = html.escape(display_link, quote=False)
-    return (
-        f"<blockquote>{display_esc}</blockquote>\n"
-        f"<a href=\"{href_esc}\">🔗 Открыть ссылку</a>"
-    )
+    return f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>"
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
@@ -879,16 +880,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
-            "Ваша ссылка:\n"
+            "<b>Ваша ссылка</b>\n"
             f"{link_block}\n\n"
-            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать 💬\n\n"
-            "❗ <b>Отвечать на сообщения могут все участники чата</b>"
+            "<b>Разместите ссылку</b> в описании профиля Telegram, TikTok, Instagram (stories) — "
+            "так вам смогут написать 💬\n\n"
+            "⚠️ <b>В чате отвечать на анонимы могут все участники</b>"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
             ]
         )
     else:
@@ -903,15 +904,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
-            "Ваша ссылка:\n"
+            "<b>Ваша ссылка</b>\n"
             f"{link_block}\n\n"
-            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
-            "чтобы вам могли написать 💬"
+            "<b>Разместите ссылку</b> в описании профиля Telegram, TikTok, Instagram (stories) — "
+            "так вам смогут написать 💬"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
             ]
         )
 
@@ -1014,22 +1015,24 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
         )
         pop_esc = html.escape(pop, quote=False)
+        link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>📌 Статистика группы</b>\n\n"
-            "➖ <b>Сегодня:</b>\n"
+            "📅 <b>Сегодня</b>\n"
             "<blockquote>"
             f"💬 Сообщений в чат: {m_today}\n"
             f"👀 Переходов по ссылке: {c_today}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "➖ <b>За всё время:</b>\n"
+            "📆 <b>За всё время</b>\n"
             "<blockquote>"
             f"💬 Сообщений в чат: {m_all}\n"
             f"👀 Переходов по ссылке: {c_all}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "Чтобы поднять ⭐ уровень популярности, делитесь ссылкой на анонимные сообщения в этот чат:\n"
-            f'👉 <a href="{full_link}">{display_link}</a>'
+            "<b>Ссылка для распространения</b>\n"
+            f"{link_block}\n\n"
+            "<i>Чем чаще ей делятся, тем выше ⭐ популярность чата.</i>"
         )
     else:
         uid = user.id
@@ -1050,22 +1053,24 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         pop_esc = html.escape(pop, quote=False)
+        link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>📌 Статистика профиля</b>\n\n"
-            "➖ <b>Сегодня:</b>\n"
+            "📅 <b>Сегодня</b>\n"
             "<blockquote>"
             f"💬 Сообщений: {m_today}\n"
             f"👀 Переходов по ссылке: {c_today}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "➖ <b>За всё время:</b>\n"
+            "📆 <b>За всё время</b>\n"
             "<blockquote>"
             f"💬 Сообщений: {m_all}\n"
             f"👀 Переходов по ссылке: {c_all}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:\n"
-            f'👉 <a href="{full_link}">{display_link}</a>'
+            "<b>Ваша ссылка</b>\n"
+            f"{link_block}\n\n"
+            "<i>Делитесь ею чаще — растёт ⭐ популярность профиля.</i>"
         )
 
     keyboard = InlineKeyboardMarkup(
@@ -1176,16 +1181,17 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
-    """Подпись к медиа: в подписях blockquote у части клиентов не рисуется — кавычки + жирный заголовок."""
+    """Тот же визуальный ритм, что и у текстового анонима: заголовок → blockquote → подсказка свайпа."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    tail = "\n\n<i>↪️ Свайпни для ответа.</i>"
+    tail = "</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
+    open_bq = "<blockquote>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
-    overhead = len(head) + len(tail) + 8
+    overhead = len(head) + len(open_bq) + len(tail)
     max_mid = max(0, TELEGRAM_MEDIA_CAPTION_MAX - overhead - 40)
     if len(mid) > max_mid:
         mid = clip(mid, max_mid)
-    return head + "❝\n" + mid + "\n❞" + tail
+    return head + open_bq + mid + tail
 
 
 async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup:
