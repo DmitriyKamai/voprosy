@@ -511,6 +511,45 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def issue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Идеи по улучшению бота: /issue или /issue текст предложения."""
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+
+    body = " ".join(context.args or []).strip()
+    if not body:
+        await msg.reply_text(
+            "💡 Здесь вы можете предложить свою идею по улучшению нашего бота\n\n"
+            "Напишите <code>/issue Текст...</code>, чтобы отправить нам сообщение.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    admin_id = _admin_user_id()
+    if admin_id is None:
+        await msg.reply_text(
+            "Сейчас нельзя принять предложение: не настроен администратор бота (ADMIN_USER_ID)."
+        )
+        return
+
+    u = _to_dict(user) or {}
+    admin_text = (
+        "💡 Предложение по боту\n\n"
+        f"{format_person_lines('', u)}"
+        f"Текст:\n{clip(body, MAX_TEXT - 200)}"
+    )
+    try:
+        await context.bot.send_message(chat_id=admin_id, text=admin_text)
+    except Exception:
+        logger.exception("Не удалось отправить /issue админу")
+        await msg.reply_text("Не удалось доставить сообщение. Попробуйте позже.")
+        return
+
+    await msg.reply_text("Спасибо! Идея отправлена.")
+
+
 def message_content_type(msg) -> str:
     if msg.text:
         return "text"
@@ -681,6 +720,7 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("issue", issue_cmd))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message)
     )
