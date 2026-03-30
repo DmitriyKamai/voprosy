@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -840,7 +841,23 @@ def extract_text_content(msg) -> str | None:
     return None
 
 
-ANON_HEADER = "💬 Анонимное сообщение\n\n"
+def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TEXT) -> str:
+    """Текст для получателя: заголовок, цитата с ❞, курсив с подсказкой про ответ (как в макете)."""
+    head = "🗣️ У тебя новое сообщение!\n\n"
+    tail = (
+        " ❞</blockquote>\n\n"
+        "<i>↪️ Свайпни для ответа.</i>"
+    )
+    open_bq = "<blockquote>"
+    raw = (body or "").strip()
+    if not raw:
+        raw = "📎"
+    safe = html.escape(raw, quote=False)
+    overhead = len(head) + len(open_bq) + len(tail)
+    max_safe = max(0, max_total - overhead)
+    if len(safe) > max_safe:
+        safe = clip(safe, max_safe)
+    return head + open_bq + safe + tail
 
 
 async def _deliver_anonymous(
@@ -896,7 +913,8 @@ async def _deliver_anonymous(
         if msg.text and not msg.photo:
             await bot.send_message(
                 chat_id=dest,
-                text=clip(ANON_HEADER + msg.text, MAX_TEXT),
+                text=format_anonymous_recipient_html(msg.text, max_total=MAX_TEXT),
+                parse_mode=ParseMode.HTML,
             )
         else:
             copied = await bot.copy_message(
@@ -904,10 +922,11 @@ async def _deliver_anonymous(
                 from_chat_id=chat.id,
                 message_id=msg.message_id,
             )
-            tail = ANON_HEADER.strip()
-            if msg.caption:
-                tail += "\n\n" + msg.caption
-            await copied.reply_text(clip(tail, MAX_CAPTION))
+            caption_body = msg.caption if msg.caption else None
+            await copied.reply_text(
+                format_anonymous_recipient_html(caption_body, max_total=MAX_CAPTION),
+                parse_mode=ParseMode.HTML,
+            )
         delivered = True
     except Exception:
         logger.exception(
