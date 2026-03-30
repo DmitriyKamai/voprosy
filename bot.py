@@ -82,22 +82,24 @@ def collect_identifiers(update: Update) -> dict[str, Any]:
     if msg:
         if msg.sender_chat:
             data["sender_chat"] = _to_dict(msg.sender_chat)
-        if getattr(msg, "forward_origin", None):
-            data["forward_origin"] = _to_dict(msg.forward_origin)
-        elif msg.forward_from:
-            data["forward_from"] = _to_dict(msg.forward_from)
-        elif msg.forward_from_chat:
-            data["forward_from_chat"] = _to_dict(msg.forward_from_chat)
-        if msg.forward_sender_name:
-            data["forward_sender_name"] = msg.forward_sender_name
-        if msg.forward_date is not None:
-            fd = msg.forward_date
-            if hasattr(fd, "isoformat"):
-                data["forward_date"] = fd.isoformat()
-            else:
-                data["forward_date"] = fd
-        if msg.is_automatic_forward:
-            data["is_automatic_forward"] = msg.is_automatic_forward
+        # PTB 22+: forward_from / forward_date и др. убраны с Message — только forward_origin
+        origin = getattr(msg, "forward_origin", None)
+        if origin:
+            data["forward_origin"] = _to_dict(origin)
+        ff = getattr(msg, "forward_from", None)
+        if ff:
+            data["forward_from"] = _to_dict(ff)
+        ffc = getattr(msg, "forward_from_chat", None)
+        if ffc:
+            data["forward_from_chat"] = _to_dict(ffc)
+        fsn = getattr(msg, "forward_sender_name", None)
+        if fsn:
+            data["forward_sender_name"] = fsn
+        fd = getattr(msg, "forward_date", None)
+        if fd is not None:
+            data["forward_date"] = fd.isoformat() if hasattr(fd, "isoformat") else fd
+        if getattr(msg, "is_automatic_forward", None):
+            data["is_automatic_forward"] = bool(msg.is_automatic_forward)
     return data
 
 
