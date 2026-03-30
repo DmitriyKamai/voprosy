@@ -943,8 +943,8 @@ def extract_text_content(msg) -> str | None:
 
 
 def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TEXT) -> str:
-    """Текст для получателя: заголовок, цитата с ❞, курсив с подсказкой про ответ (как в макете)."""
-    head = "🗣️ У тебя новое сообщение!\n\n"
+    """Текст для получателя: 💬 заголовок, цитата с ❞, курсив «Свайпни» (как в макете)."""
+    head = "<b>💬 У тебя новое сообщение!</b>\n\n"
     tail = (
         " ❞</blockquote>\n\n"
         "<i>↪️ Свайпни для ответа.</i>"
@@ -962,26 +962,32 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
-    """Подпись к фото/видео и т.д.: жирный заголовок, текст, курсив «Свайпни» (как в макете канала)."""
+    """Подпись к медиа: тот же макет, что и для текста — заголовок, blockquote + ❞, «Свайпни»."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    foot = "\n\n<i>↪️ Свайпни для ответа.</i>"
+    open_bq = "<blockquote>"
+    tail = " ❞</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
-    overhead = len(head) + len(foot)
+    overhead = len(head) + len(open_bq) + len(tail)
     max_mid = max(0, TELEGRAM_MEDIA_CAPTION_MAX - overhead - 40)
     if len(mid) > max_mid:
         mid = clip(mid, max_mid)
-    return head + mid + foot
+    return head + open_bq + mid + tail
 
 
-async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup | None:
-    """Кнопка «Прокомментировать» — открывает бота в личке."""
+async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup:
+    """Кнопки для владельца ссылки: чат с ботом и жалоба в поддержку."""
     me = await bot.get_me()
-    if not me.username:
-        return None
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🗨️ Прокомментировать", url=f"https://t.me/{me.username}")]]
+    rows: list[list[InlineKeyboardButton]] = []
+    if me.username:
+        rows.append(
+            [InlineKeyboardButton("🗨️ Прокомментировать", url=f"https://t.me/{me.username}")]
+        )
+    sup = SUPPORT_USERNAME.lstrip("@")
+    rows.append(
+        [InlineKeyboardButton("🚮 Пожаловаться", url=f"https://t.me/{sup}")]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 async def _try_send_anonymous_media_with_caption(
@@ -989,7 +995,7 @@ async def _try_send_anonymous_media_with_caption(
     dest: int,
     msg,
     caption: str,
-    reply_markup: InlineKeyboardMarkup | None,
+    reply_markup: InlineKeyboardMarkup,
 ) -> bool:
     """Одно медиа + подпись + клавиатура; для стикера — стикер и отдельное сообщение с текстом."""
     kw: dict[str, Any] = {
@@ -1096,11 +1102,13 @@ async def _deliver_anonymous(
     delivered = False
     try:
         if msg.text and not msg.photo:
+            markup = await _anon_recipient_markup(bot)
             try:
                 await bot.send_message(
                     chat_id=dest,
                     text=format_anonymous_recipient_html(msg.text, max_total=MAX_TEXT),
                     parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
                 )
             except Exception:
                 logger.exception(
@@ -1108,12 +1116,12 @@ async def _deliver_anonymous(
                     dest,
                 )
                 plain = clip(
-                    "🗣️ У тебя новое сообщение!\n\n"
+                    "💬 У тебя новое сообщение!\n\n"
                     + (msg.text or "")
                     + "\n\n↪️ Свайпни для ответа.",
                     MAX_TEXT,
                 )
-                await bot.send_message(chat_id=dest, text=plain)
+                await bot.send_message(chat_id=dest, text=plain, reply_markup=markup)
             delivered = True
         else:
             markup = await _anon_recipient_markup(bot)
@@ -1138,15 +1146,13 @@ async def _deliver_anonymous(
                         "Запасной ответ с подписью к copy_message не прошёл dest=%s",
                         dest,
                     )
-                    plain = (
+                    plain = clip(
                         "💬 У тебя новое сообщение!\n\n"
                         + ((msg.caption or "").strip() or "📎")
-                        + "\n\n↪️ Свайпни для ответа."
+                        + "\n\n↪️ Свайпни для ответа.",
+                        MAX_CAPTION,
                     )
-                    await copied.reply_text(
-                        clip(plain, MAX_CAPTION),
-                        reply_markup=markup,
-                    )
+                    await copied.reply_text(plain, reply_markup=markup)
             delivered = True
     except Exception:
         logger.exception(
