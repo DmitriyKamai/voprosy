@@ -71,6 +71,18 @@ TEXT_AFTER_USER_LINK_HTML = (
     "фото, видео, текст, голосовые, видеосообщения (кружки), стикеры"
 )
 
+def html_help_support_message() -> str:
+    """Текст /help: поддержка и ссылка на @username из SUPPORT_USERNAME."""
+    sup = SUPPORT_USERNAME.lstrip("@")
+    sup_esc = html.escape(sup, quote=False)
+    href = html.escape(f"https://t.me/{sup}", quote=True)
+    return (
+        "Техническая поддержка\n\n"
+        "Если у вас возник вопрос, жалоба или предложение, немедленно обратитесь к нам:\n"
+        f'<a href="{href}">@{sup_esc}</a>'
+    )
+
+
 TEXT_AFTER_GROUP_LINK_HTML = (
     "<b>🚀 Анонимное сообщение в чат</b>\n"
     "Сообщение увидят участники чата, ссылку на который вы открыли.\n\n"
@@ -1084,6 +1096,18 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Справка: контакт технической поддержки."""
+    msg = update.effective_message
+    if not msg:
+        return
+    await msg.reply_text(
+        html_help_support_message(),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 async def issue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Идеи по улучшению бота: /issue или /issue текст предложения."""
     msg = update.effective_message
@@ -1600,6 +1624,7 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CallbackQueryHandler(cancel_anon_callback, pattern=f"^{CB_CANCEL_ANON}$"))
     app.add_handler(
         CallbackQueryHandler(anon_sent_write_more_callback, pattern=f"^{CB_ANON_SENT_WRITE_MORE}$")
