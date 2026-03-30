@@ -1466,6 +1466,8 @@ async def handle_owner_reply_to_anonymous_sender(
     owner_chat_id = msg.chat_id
     owner_name = _user_display_name(_to_dict(msg.from_user) or {})
 
+    reply_to_owner = ReplyParameters(message_id=msg.message_id, chat_id=msg.chat_id)
+
     sub = fetch_submission_for_reply(submission_id)
     if sub is None:
         try:
@@ -1479,12 +1481,16 @@ async def handle_owner_reply_to_anonymous_sender(
                 "Не удалось доставить ответ (нет submission) user=%s",
                 anon_sender_user_id,
             )
-            await msg.reply_text(
-                "Не удалось доставить ответ. Возможно, отправитель заблокировал бота."
+            await bot.send_message(
+                chat_id=msg.chat_id,
+                text="Не удалось доставить ответ. Возможно, отправитель заблокировал бота.",
+                reply_parameters=reply_to_owner,
             )
             return
-        await msg.reply_text(
-            "<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
+        await bot.send_message(
+            chat_id=msg.chat_id,
+            text="<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
+            reply_parameters=reply_to_owner,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -1529,13 +1535,17 @@ async def handle_owner_reply_to_anonymous_sender(
             "Не удалось доставить ответ владельца анонимному отправителю user=%s",
             anon_sender_user_id,
         )
-        await msg.reply_text(
-            "Не удалось доставить ответ. Возможно, отправитель заблокировал бота."
+        await bot.send_message(
+            chat_id=msg.chat_id,
+            text="Не удалось доставить ответ. Возможно, отправитель заблокировал бота.",
+            reply_parameters=reply_to_owner,
         )
         return
 
-    await msg.reply_text(
-        "<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
+    await bot.send_message(
+        chat_id=msg.chat_id,
+        text="<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
+        reply_parameters=reply_to_owner,
         parse_mode=ParseMode.HTML,
     )
 
