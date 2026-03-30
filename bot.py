@@ -200,7 +200,7 @@ _LINK_TOKEN_LEN = 7
 
 
 def _random_user_link_token() -> str:
-    """Непредсказуемый фрагмент для ?start=q… (не только цифры — отличие от легаси q123…)."""
+    """Непредсказуемый фрагмент для ?start=q… (не только цифры)."""
     while True:
         t = "".join(secrets.choice(_LINK_TOKEN_CHARS) for _ in range(_LINK_TOKEN_LEN))
         if not t.isdigit():
@@ -208,7 +208,7 @@ def _random_user_link_token() -> str:
 
 
 def _stored_user_link_token_ok(tok: str) -> bool:
-    """В БД храним только 7-символьный токен из алфавита; иначе это часто legacy user id или мусор."""
+    """В БД храним только 7-символьный токен из алфавита; иначе перевыпуск."""
     if not tok or len(tok) != _LINK_TOKEN_LEN or tok.isdigit():
         return False
     return all(c in _LINK_TOKEN_CHARS for c in tok)
@@ -800,15 +800,13 @@ def html_personal_link_block(full_link: str, display_link: str) -> str:
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
-    """qTOKEN / vTOKEN → владелец (сначала токен в БД, иначе легаси …ЦИФРЫ); v — как у q для старых ссылок."""
+    """qTOKEN → владелец только по токену в БД; s456 → id строки group_invites."""
     p = arg.strip()
-    if len(p) >= 2 and p[0] in ("q", "v"):
+    if len(p) >= 2 and p[0] == "q":
         rest = p[1:]
         uid = resolve_user_link_token(rest)
         if uid is not None:
             return ("user", uid)
-        if rest.isdigit():
-            return ("user", int(rest))
         return None
     if len(p) >= 2 and p[0] == "s" and p[1:].isdigit():
         return ("group_invite", int(p[1:]))
