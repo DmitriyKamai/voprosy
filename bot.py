@@ -1099,7 +1099,7 @@ async def issue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not body:
         await msg.reply_text(
             "💡 Здесь вы можете предложить свою идею по улучшению нашего бота\n\n"
-            "Напишите <code>/issue Текст...</code>, чтобы отправить нам сообщение.",
+            "Напишите “<code>/issue</code> <code>Текст...</code>”, чтобы отправить нам сообщение.",
             parse_mode=ParseMode.HTML,
         )
         return
