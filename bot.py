@@ -395,25 +395,25 @@ def fetch_submission_for_reply(
     )
 
 
-async def keyboard_write_more_for_sender(
-    bot,
+def keyboard_write_more_for_sender(
     recipient_user_id: int | None,
     recipient_chat_id: int | None,
 ) -> InlineKeyboardMarkup | None:
-    """Ссылка для повторной анонимной отправки тому же получателю."""
-    me = await bot.get_me()
-    if not me.username:
-        return None
-    if recipient_user_id is not None:
-        tok = get_or_create_user_link_token(recipient_user_id)
-        url = f"https://t.me/{me.username}?start=q{tok}"
-    elif recipient_chat_id is not None:
-        inv = get_or_create_group_invite_row_id(recipient_chat_id)
-        url = f"https://t.me/{me.username}?start=s{inv}"
-    else:
+    """Повторная анонимная отправка тому же получателю (callback — без стрелки URL)."""
+    if recipient_user_id is None and recipient_chat_id is None:
         return None
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Написать ещё ✍️", url=url)]]
+        [
+            [
+                InlineKeyboardButton(
+                    "Написать ещё ✍️",
+                    callback_data=anon_write_more_callback_data(
+                        recipient_user_id=recipient_user_id,
+                        recipient_chat_id=recipient_chat_id,
+                    ),
+                )
+            ]
+        ]
     )
 
 
@@ -923,7 +923,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
             "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
             "<b>чтобы вам могли написать</b> 💬\n\n"
             "❗ <b>Отвечать на сообщения могут все участники чата</b>"
         )
@@ -947,7 +947,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
             "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "<b>Разместите эту ссылку</b> 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
             "<b>чтобы вам могли написать</b> 💬"
         )
         keyboard = InlineKeyboardMarkup(
@@ -1567,7 +1567,7 @@ async def handle_owner_reply_to_anonymous_sender(
 
     text_content, rec_uid, rec_cid, sender_chat_id, sender_message_id = sub
     original = (text_content or "").strip() or "📎"
-    kb = await keyboard_write_more_for_sender(bot, rec_uid, rec_cid)
+    kb = keyboard_write_more_for_sender(rec_uid, rec_cid)
 
     sender_thread: ReplyParameters | None = None
     if (
