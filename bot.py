@@ -1234,7 +1234,7 @@ def format_anonymous_media_caption_html(body: str | None) -> str:
 def _anon_recipient_markup() -> InlineKeyboardMarkup:
     """Кнопка «Пожаловаться»: по клику — нативный alert, без перехода в чат."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🛡️ Пожаловаться", callback_data=CB_ANON_REPORT)]]
+        [[InlineKeyboardButton("🚮 Пожаловаться", callback_data=CB_ANON_REPORT)]]
     )
 
 
