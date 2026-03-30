@@ -17,7 +17,8 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-load_dotenv()
+_ROOT = Path(__file__).resolve().parent
+load_dotenv(_ROOT / ".env")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
