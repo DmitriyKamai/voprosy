@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 _ROOT = Path(__file__).resolve().parent
@@ -100,7 +100,23 @@ def collect_identifiers(update: Update) -> dict[str, Any]:
             data["forward_date"] = fd.isoformat() if hasattr(fd, "isoformat") else fd
         if getattr(msg, "is_automatic_forward", None):
             data["is_automatic_forward"] = bool(msg.is_automatic_forward)
+        if msg.contact:
+            data["contact"] = _to_dict(msg.contact)
     return data
+
+
+def format_phone_line_for_admin(msg) -> str:
+    """Телефон бот видит только если пользователь прислал контакт (vCard)."""
+    if not msg or not msg.contact:
+        return ""
+    c = msg.contact
+    lines = [f"Телефон (пользователь открыл / прислал контакт): {c.phone_number}"]
+    name = " ".join(x for x in (c.first_name, c.last_name) if x)
+    if name:
+        lines.append(f"Имя в контакте: {name}")
+    if c.user_id is not None:
+        lines.append(f"user_id в записи контакта: {c.user_id}")
+    return "\n".join(lines) + "\n\n"
 
 
 def pretty_identifiers(data: dict[str, Any]) -> str:
@@ -150,10 +166,21 @@ def clip(s: str, limit: int) -> str:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [KeyboardButton("📱 Отправить номер телефона", request_contact=True)],
+    ]
+    markup = ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
     await update.effective_message.reply_text(
         "Напишите сюда всё, что нужно передать анонимно или для учёта — "
         "сообщение будет сохранено и передано администратору вместе с вашими "
-        "техническими идентификаторами в Telegram (как видит бот)."
+        "техническими идентификаторами в Telegram (как видит бот).\n\n"
+        "Номер телефона бот не видит сам по себе — только если вы нажмёте кнопку ниже "
+        "и подтвердите отправку контакта.",
+        reply_markup=markup,
     )
 
 
@@ -190,6 +217,11 @@ def extract_text_content(msg) -> str | None:
         return msg.text
     if msg.caption:
         return msg.caption
+    if msg.contact:
+        c = msg.contact
+        extra = " ".join(x for x in (c.first_name, c.last_name) if x)
+        base = f"contact:{c.phone_number}"
+        return f"{base} {extra}".strip() if extra else base
     return None
 
 
@@ -209,6 +241,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     ids_block = pretty_identifiers(identifiers)
     ctype = message_content_type(msg)
     text_part = extract_text_content(msg)
+    phone_block = format_phone_line_for_admin(msg)
 
     raw_msg = _to_dict(msg)
 
@@ -224,7 +257,8 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     header = (
         f"📥 Подслушано — запись #{row_id}\n"
-        f"Тип: {ctype}\n\n"
+        f"Тип: {ctype}\n"
+        f"{phone_block}"
         f"Идентификаторы (JSON):\n{clip(ids_block, MAX_TEXT - 400)}"
     )
 
@@ -246,7 +280,9 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             admin_header = (
                 f"📥 Подслушано — запись #{row_id}\n"
-                f"Тип: {ctype}\n\nИдентификаторы:\n{clip(ids_block, MAX_CAPTION)}"
+                f"Тип: {ctype}\n"
+                f"{phone_block}"
+                f"Идентификаторы:\n{clip(ids_block, MAX_CAPTION)}"
             )
             await copied.reply_text(admin_header)
     except Exception:
