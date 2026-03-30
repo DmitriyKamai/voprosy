@@ -506,7 +506,9 @@ def main() -> None:
     init_db()
     admin = _admin_user_id()
     if admin is None:
-        logger.info("ADMIN_USER_ID не задан — режим только личных ссылок и анонимных сообщений")
+        logger.info(
+            "ADMIN_USER_ID не задан — копии сообщений админу не отправляются (только доставка получателям)"
+        )
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
