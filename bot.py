@@ -43,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).resolve().parent / "podslushano.db"
+DB_PATH = Path(__file__).resolve().parent / "data.sqlite3"
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_USER_ID_RAW = os.environ.get("ADMIN_USER_ID", "").strip()
 _support_raw = os.environ.get("SUPPORT_USERNAME", "quesupport").strip().lstrip("@")
