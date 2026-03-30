@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +33,9 @@ ADMIN_USER_ID_RAW = os.environ.get("ADMIN_USER_ID", "").strip()
 
 MAX_CAPTION = 3500
 MAX_TEXT = 4000
+
+# Москва = UTC+3 (без летнего времени с 2014 г.; без зависимости tzdata на Windows)
+MSK_TZ = timezone(timedelta(hours=3), name="MSK")
 
 
 def _admin_user_id() -> int | None:
@@ -66,7 +69,93 @@ def init_db() -> None:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
         if "recipient_user_id" not in cols:
             conn.execute("ALTER TABLE submissions ADD COLUMN recipient_user_id INTEGER")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS link_clicks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_link_clicks_owner ON link_clicks(owner_user_id)"
+        )
         conn.commit()
+
+
+def log_link_click(owner_user_id: int) -> None:
+    """Один переход по персональной ссылке (владелец — owner_user_id)."""
+    created = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO link_clicks (owner_user_id, created_at) VALUES (?, ?)",
+            (owner_user_id, created),
+        )
+        conn.commit()
+
+
+def _msk_today_start_utc_iso() -> str:
+    """Начало «сегодня» по Москве, в UTC для сравнения с created_at в БД."""
+    now_msk = datetime.now(MSK_TZ)
+    start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_msk.astimezone(timezone.utc).isoformat()
+
+
+def _count_messages_to_user(conn: sqlite3.Connection, user_id: int, since_iso: str | None) -> int:
+    if since_iso:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM submissions WHERE recipient_user_id = ? AND created_at >= ?",
+            (user_id, since_iso),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM submissions WHERE recipient_user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _count_link_clicks_for_owner(
+    conn: sqlite3.Connection, owner_id: int, since_iso: str | None
+) -> int:
+    if since_iso:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM link_clicks WHERE owner_user_id = ? AND created_at >= ?",
+            (owner_id, since_iso),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM link_clicks WHERE owner_user_id = ?",
+            (owner_id,),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _popularity_place(conn: sqlite3.Connection, user_id: int) -> str:
+    """Место по сумме (сообщения получателю + клики по ссылке); свыше 1000 — как в макете."""
+    msg_rows = conn.execute(
+        """
+        SELECT recipient_user_id, COUNT(*) AS c FROM submissions
+        WHERE recipient_user_id IS NOT NULL GROUP BY recipient_user_id
+        """
+    ).fetchall()
+    click_rows = conn.execute(
+        """
+        SELECT owner_user_id, COUNT(*) AS c FROM link_clicks GROUP BY owner_user_id
+        """
+    ).fetchall()
+    scores: dict[int, int] = {}
+    for uid, c in msg_rows:
+        scores[uid] = scores.get(uid, 0) + int(c)
+    for uid, c in click_rows:
+        scores[uid] = scores.get(uid, 0) + int(c)
+    my_score = scores.get(user_id, 0)
+    ahead = sum(1 for uid, s in scores.items() if s > my_score)
+    rank = ahead + 1
+    if rank > 1000:
+        return "1000+ место"
+    return f"{rank} место"
 
 
 def _to_dict(obj: Any) -> dict[str, Any] | None:
@@ -317,6 +406,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     target = _parse_anon_target_start(context.args or [])
     if target is not None:
+        log_link_click(target)
         context.user_data["anon_target_id"] = target
         await msg.reply_text(
             "Напишите сообщение — оно уйдёт анонимно человеку, который дал вам ссылку.",
@@ -355,6 +445,63 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
             [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
         ]
+    )
+    await msg.reply_text(
+        text_html,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Статистика профиля владельца ссылки (сообщения, переходы, место в рейтинге)."""
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+
+    me = await context.bot.get_me()
+    if not me.username:
+        await msg.reply_text("У бота нет username — статистику ссылки показать нельзя.")
+        return
+
+    uid = user.id
+    today_since = _msk_today_start_utc_iso()
+    with sqlite3.connect(DB_PATH) as conn:
+        m_today = _count_messages_to_user(conn, uid, today_since)
+        m_all = _count_messages_to_user(conn, uid, None)
+        c_today = _count_link_clicks_for_owner(conn, uid, today_since)
+        c_all = _count_link_clicks_for_owner(conn, uid, None)
+        pop = _popularity_place(conn, uid)
+
+    full_link = f"https://t.me/{me.username}?start=q{uid}"
+    display_link = f"t.me/{me.username}?start=q{uid}"
+    share_text = "Напиши мне анонимно 💬"
+    share_href = (
+        "https://t.me/share/url?"
+        f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
+    )
+
+    text_html = (
+        "<b>📌 Статистика профиля</b>\n\n"
+        "➖ <b>Сегодня:</b>\n"
+        "<blockquote>"
+        f"💬 <b>Сообщений:</b> {m_today}\n"
+        f"👀 <b>Переходов по ссылке:</b> {c_today}\n"
+        f"⭐ <b>Популярность:</b> {pop}"
+        "</blockquote>\n\n"
+        "➖ <b>За всё время:</b>\n"
+        "<blockquote>"
+        f"💬 <b>Сообщений:</b> {m_all}\n"
+        f"👀 <b>Переходов по ссылке:</b> {c_all}\n"
+        f"⭐ <b>Популярность:</b> {pop}"
+        "</blockquote>\n\n"
+        "Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:\n"
+        f'👉 <a href="{full_link}">{display_link}</a>'
+    )
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)]]
     )
     await msg.reply_text(
         text_html,
@@ -533,6 +680,7 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message)
     )
