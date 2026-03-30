@@ -1031,8 +1031,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"👀 <i>Переходов по ссылке:</i> {c_all}\n"
             f"⭐ <i>Популярность:</i> {pop_esc}"
             "</blockquote>\n\n"
-            "<i>Чтобы поднять ⭐ уровень популярности, делитесь ссылкой на анонимные сообщения в этот чат:</i>\n\n"
-            f"<i>👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
+            f"<i>Чтобы поднять ⭐ уровень популярности, делитесь ссылкой на анонимные сообщения в этот чат:\n"
+            f"👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
         )
     else:
         uid = user.id
@@ -1069,8 +1069,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"👀 <i>Переходов по ссылке:</i> {c_all}\n"
             f"⭐ <i>Популярность:</i> {pop_esc}"
             "</blockquote>\n\n"
-            "<i>Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:</i>\n\n"
-            f"<i>👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
+            f"<i>Чтобы поднять ⭐ уровень популярности, распространяйте свою персональную ссылку:\n"
+            f"👉 <a href=\"{href_esc}\">{display_esc}</a></i>"
         )
 
     keyboard = InlineKeyboardMarkup(
