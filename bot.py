@@ -345,23 +345,25 @@ def lookup_anon_reply_route(
 
 def fetch_submission_for_reply(
     submission_id: int,
-) -> tuple[str | None, int | None, int | None] | None:
-    """Текст анонима и получатель для оформления ответа; None если записи нет."""
+) -> tuple[str | None, int | None, int | None, int | None, int | None] | None:
+    """Текст анонима, получатель, chat_id и message_id исходного сообщения отправителя у бота."""
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             """
-            SELECT text_content, recipient_user_id, recipient_chat_id
+            SELECT text_content, recipient_user_id, recipient_chat_id, chat_id, message_id
             FROM submissions WHERE id = ?
             """,
             (submission_id,),
         ).fetchone()
     if not row:
         return None
-    tc, ru, rc = row[0], row[1], row[2]
+    tc, ru, rc, sch, smid = row[0], row[1], row[2], row[3], row[4]
     return (
         str(tc) if tc is not None else None,
         int(ru) if ru is not None else None,
         int(rc) if rc is not None else None,
+        int(sch) if sch is not None else None,
+        int(smid) if smid is not None else None,
     )
 
 
@@ -388,13 +390,12 @@ async def keyboard_write_more_for_sender(
 
 
 def format_owner_reply_for_sender_html(
-    owner_name: str, original_anon_snippet: str, owner_reply_text: str
+    original_anon_snippet: str, owner_reply_text: str
 ) -> str:
-    """Цитата с именем + исходный аноним + текст ответа (как в макете)."""
+    """Исходный аноним (цитата) + ответ без имени получателя — чат анонимный."""
     o = clip(original_anon_snippet.strip() or "📎", 900)
     body = clip(owner_reply_text, MAX_TEXT - 400)
     return (
-        f"<b>{html.escape(owner_name)}</b>\n"
         f"<blockquote>{html.escape(o)}</blockquote>\n\n"
         f"{html.escape(body)}"
     )
@@ -1464,8 +1465,6 @@ async def handle_owner_reply_to_anonymous_sender(
         return
     bot = context.bot
     owner_chat_id = msg.chat_id
-    owner_name = _user_display_name(_to_dict(msg.from_user) or {})
-
     reply_to_owner = ReplyParameters(message_id=msg.message_id, chat_id=msg.chat_id)
 
     sub = fetch_submission_for_reply(submission_id)
@@ -1495,41 +1494,43 @@ async def handle_owner_reply_to_anonymous_sender(
         )
         return
 
-    text_content, rec_uid, rec_cid = sub
+    text_content, rec_uid, rec_cid, sender_chat_id, sender_message_id = sub
     original = (text_content or "").strip() or "📎"
     kb = await keyboard_write_more_for_sender(bot, rec_uid, rec_cid)
 
+    sender_thread: ReplyParameters | None = None
+    if (
+        sender_chat_id is not None
+        and sender_message_id is not None
+        and sender_chat_id == anon_sender_user_id
+    ):
+        sender_thread = ReplyParameters(
+            message_id=sender_message_id,
+            chat_id=sender_chat_id,
+        )
+
     try:
         if msg.text and not msg.photo:
-            body_html = format_owner_reply_for_sender_html(
-                owner_name, original, msg.text or ""
-            )
-            await bot.send_message(
-                chat_id=anon_sender_user_id,
-                text=body_html,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-            )
+            body_html = format_owner_reply_for_sender_html(original, msg.text or "")
+            sm: dict[str, Any] = {
+                "chat_id": anon_sender_user_id,
+                "text": body_html,
+                "parse_mode": ParseMode.HTML,
+                "reply_markup": kb,
+            }
+            if sender_thread is not None:
+                sm["reply_parameters"] = sender_thread
+            await bot.send_message(**sm)
         else:
-            header = (
-                f"<b>{html.escape(owner_name)}</b>\n"
-                f"<blockquote>{html.escape(clip(original, 900))}</blockquote>"
-            )
-            sent = await bot.send_message(
-                chat_id=anon_sender_user_id,
-                text=header,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-            )
-            await bot.copy_message(
-                chat_id=anon_sender_user_id,
-                from_chat_id=owner_chat_id,
-                message_id=msg.message_id,
-                reply_parameters=ReplyParameters(
-                    message_id=sent.message_id,
-                    chat_id=anon_sender_user_id,
-                ),
-            )
+            cm: dict[str, Any] = {
+                "chat_id": anon_sender_user_id,
+                "from_chat_id": owner_chat_id,
+                "message_id": msg.message_id,
+                "reply_markup": kb,
+            }
+            if sender_thread is not None:
+                cm["reply_parameters"] = sender_thread
+            await bot.copy_message(**cm)
     except Exception:
         logger.exception(
             "Не удалось доставить ответ владельца анонимному отправителю user=%s",
