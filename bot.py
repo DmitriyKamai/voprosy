@@ -1484,8 +1484,7 @@ async def handle_owner_reply_to_anonymous_sender(
             )
             return
         await msg.reply_text(
-            "<b>✅ Ответ успешно отправлен</b>\n\n"
-            "<i>Статистика — /stats</i>",
+            "<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -1536,8 +1535,7 @@ async def handle_owner_reply_to_anonymous_sender(
         return
 
     await msg.reply_text(
-        "<b>✅ Ответ успешно отправлен</b>\n\n"
-        "<i>Статистика — /stats</i>",
+        "<b>✅ Ответ успешно отправлен</b>\nСтатистика — /stats",
         parse_mode=ParseMode.HTML,
     )
 
