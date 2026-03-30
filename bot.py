@@ -1498,6 +1498,17 @@ async def _deliver_anonymous(
                 recipient_chat_id=to_chat_id,
             ),
         )
+        # Как при первом открытии ссылки /start с payload: снова инструкция и «Отменить».
+        intro_html = (
+            TEXT_AFTER_USER_LINK_HTML
+            if to_user_id is not None
+            else TEXT_AFTER_GROUP_LINK_HTML
+        )
+        await msg.reply_text(
+            intro_html,
+            reply_markup=KEYBOARD_CANCEL_ANON,
+            parse_mode=ParseMode.HTML,
+        )
 
 
 async def inline_share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
