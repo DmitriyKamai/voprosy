@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 _ROOT = Path(__file__).resolve().parent
@@ -166,21 +166,11 @@ def clip(s: str, limit: int) -> str:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [
-        [KeyboardButton("📱 Отправить номер телефона", request_contact=True)],
-    ]
-    markup = ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True,
-        one_time_keyboard=True,
-    )
     await update.effective_message.reply_text(
         "Напишите сюда всё, что нужно передать анонимно или для учёта — "
         "сообщение будет сохранено и передано администратору вместе с вашими "
-        "техническими идентификаторами в Telegram (как видит бот).\n\n"
-        "Номер телефона бот не видит сам по себе — только если вы нажмёте кнопку ниже "
-        "и подтвердите отправку контакта.",
-        reply_markup=markup,
+        "техническими идентификаторами в Telegram (как видит бот).",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
