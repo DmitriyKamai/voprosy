@@ -951,23 +951,52 @@ async def _deliver_anonymous(
     delivered = False
     try:
         if msg.text and not msg.photo:
-            await bot.send_message(
-                chat_id=dest,
-                text=format_anonymous_recipient_html(msg.text, max_total=MAX_TEXT),
-                parse_mode=ParseMode.HTML,
-            )
+            try:
+                await bot.send_message(
+                    chat_id=dest,
+                    text=format_anonymous_recipient_html(msg.text, max_total=MAX_TEXT),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                logger.exception(
+                    "HTML-шаблон анонимного текста не принят API, пробуем без разметки dest=%s",
+                    dest,
+                )
+                plain = clip(
+                    "🗣️ У тебя новое сообщение!\n\n"
+                    + (msg.text or "")
+                    + "\n\n↪️ Свайпни для ответа.",
+                    MAX_TEXT,
+                )
+                await bot.send_message(chat_id=dest, text=plain)
+            delivered = True
         else:
             copied = await bot.copy_message(
                 chat_id=dest,
                 from_chat_id=chat.id,
                 message_id=msg.message_id,
             )
+            delivered = True
             caption_body = msg.caption if msg.caption else None
-            await copied.reply_text(
-                format_anonymous_recipient_html(caption_body, max_total=MAX_CAPTION),
-                parse_mode=ParseMode.HTML,
-            )
-        delivered = True
+            try:
+                await copied.reply_text(
+                    format_anonymous_recipient_html(caption_body, max_total=MAX_CAPTION),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                logger.exception(
+                    "Подпись-шаблон к анонимному медиа не отправилась (само медиа уже у получателя) dest=%s",
+                    dest,
+                )
+                try:
+                    await copied.reply_text(
+                        "🗣️ У тебя новое сообщение.\n\n↪️ Свайпни для ответа."
+                    )
+                except Exception:
+                    logger.exception(
+                        "Не удалось отправить запасную подпись к анонимному медиа dest=%s",
+                        dest,
+                    )
     except Exception:
         logger.exception(
             "Не удалось доставить анонимное сообщение dest=%s user=%s chat=%s",
