@@ -59,7 +59,8 @@ MAX_TEXT = 4000
 TELEGRAM_MEDIA_CAPTION_MAX = 1024
 
 CB_CANCEL_ANON = "cancel_anon"
-CB_ANON_SENT_WRITE_MORE = "anon_wm"
+# callback_data ≤ 64 байт: wm:u:ID или wm:c:CHAT_ID
+CB_ANON_SENT_WRITE_MORE_PREFIX = "wm:"
 CB_ANON_SENT_DELETE_PREFIX = "anon_del:"
 CB_ANON_REPORT = "anon_report"
 
@@ -98,11 +99,37 @@ KEYBOARD_CANCEL_ANON = InlineKeyboardMarkup(
 )
 
 
-def keyboard_after_anonymous_sent(user_message_id: int) -> InlineKeyboardMarkup:
+def anon_write_more_callback_data(
+    *,
+    recipient_user_id: int | None = None,
+    recipient_chat_id: int | None = None,
+) -> str:
+    """Данные кнопки «Написать ещё»: восстановить того же получателя после клика."""
+    if recipient_user_id is not None:
+        return f"{CB_ANON_SENT_WRITE_MORE_PREFIX}u:{recipient_user_id}"
+    if recipient_chat_id is not None:
+        return f"{CB_ANON_SENT_WRITE_MORE_PREFIX}c:{recipient_chat_id}"
+    raise ValueError("нужен recipient_user_id или recipient_chat_id")
+
+
+def keyboard_after_anonymous_sent(
+    user_message_id: int,
+    *,
+    recipient_user_id: int | None = None,
+    recipient_chat_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """После успешной анонимной отправки: ещё одно сообщение или удалить след в чате."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Написать ещё ✍️", callback_data=CB_ANON_SENT_WRITE_MORE)],
+            [
+                InlineKeyboardButton(
+                    "Написать ещё ✍️",
+                    callback_data=anon_write_more_callback_data(
+                        recipient_user_id=recipient_user_id,
+                        recipient_chat_id=recipient_chat_id,
+                    ),
+                )
+            ],
             [
                 InlineKeyboardButton(
                     "Удалить сообщение 🗑️",
@@ -969,15 +996,44 @@ async def cancel_anon_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def anon_sent_write_more_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Убираем кнопки; отправитель может прислать ещё одно анонимное сообщение."""
+    """Снова показываем инструкцию и клавиатуру «Отменить», цель — тот же получатель."""
     q = update.callback_query
-    if not q or not q.message:
+    if not q or not q.message or not q.data:
         return
-    await q.answer("Можно отправить ещё одно сообщение.")
+    if not q.data.startswith(CB_ANON_SENT_WRITE_MORE_PREFIX):
+        return
+    parts = q.data.split(":", 2)
+    if len(parts) != 3 or parts[0] != CB_ANON_SENT_WRITE_MORE_PREFIX.rstrip(":"):
+        await q.answer("Некорректные данные.", show_alert=True)
+        return
+    kind, id_str = parts[1], parts[2]
+    try:
+        tid = int(id_str)
+    except ValueError:
+        await q.answer("Некорректные данные.", show_alert=True)
+        return
+    if kind == "u":
+        context.user_data["anon_target_user_id"] = tid
+        context.user_data.pop("anon_target_chat_id", None)
+        text_html = TEXT_AFTER_USER_LINK_HTML
+    elif kind == "c":
+        context.user_data["anon_target_chat_id"] = tid
+        context.user_data.pop("anon_target_user_id", None)
+        text_html = TEXT_AFTER_GROUP_LINK_HTML
+    else:
+        await q.answer("Некорректные данные.", show_alert=True)
+        return
+
+    await q.answer()
     try:
         await q.edit_message_reply_markup(reply_markup=None)
     except Exception:
         logger.exception("Не удалось убрать кнопки после «Написать ещё»")
+    await q.message.reply_text(
+        text_html,
+        reply_markup=KEYBOARD_CANCEL_ANON,
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def anon_sent_delete_callback(
@@ -1438,7 +1494,11 @@ async def _deliver_anonymous(
     if delivered:
         await msg.reply_text(
             "Сообщение отправлено, ожидайте ответ!",
-            reply_markup=keyboard_after_anonymous_sent(msg.message_id),
+            reply_markup=keyboard_after_anonymous_sent(
+                msg.message_id,
+                recipient_user_id=to_user_id,
+                recipient_chat_id=to_chat_id,
+            ),
         )
 
 
@@ -1641,7 +1701,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(anon_report_callback, pattern=f"^{CB_ANON_REPORT}$"))
     app.add_handler(CallbackQueryHandler(cancel_anon_callback, pattern=f"^{CB_CANCEL_ANON}$"))
     app.add_handler(
-        CallbackQueryHandler(anon_sent_write_more_callback, pattern=f"^{CB_ANON_SENT_WRITE_MORE}$")
+        CallbackQueryHandler(
+            anon_sent_write_more_callback, pattern=r"^wm:[uc]:-?\d+$"
+        )
     )
     app.add_handler(
         CallbackQueryHandler(
