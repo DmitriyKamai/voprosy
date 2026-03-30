@@ -207,6 +207,13 @@ def _random_user_link_token() -> str:
             return t
 
 
+def _stored_user_link_token_ok(tok: str) -> bool:
+    """В БД храним только 7-символьный токен из алфавита; иначе это часто legacy user id или мусор."""
+    if not tok or len(tok) != _LINK_TOKEN_LEN or tok.isdigit():
+        return False
+    return all(c in _LINK_TOKEN_CHARS for c in tok)
+
+
 def get_or_create_user_link_token(owner_user_id: int) -> str:
     """Стабильный случайный токен владельца для персональной ссылки (без открытого user id)."""
     created = datetime.now(timezone.utc).isoformat()
@@ -217,15 +224,17 @@ def get_or_create_user_link_token(owner_user_id: int) -> str:
         ).fetchone()
         if row:
             tok = str(row[0])
-            # В БД не должно быть «токена» из одних цифр — в ссылке он выглядит как user id.
-            if tok.isdigit():
-                conn.execute(
-                    "DELETE FROM user_link_tokens WHERE owner_user_id = ?",
-                    (owner_user_id,),
-                )
-                conn.commit()
-            else:
+            if _stored_user_link_token_ok(tok):
                 return tok
+            conn.execute(
+                "DELETE FROM user_link_tokens WHERE owner_user_id = ?",
+                (owner_user_id,),
+            )
+            conn.commit()
+            logger.info(
+                "Перевыпуск токена ссылки (неверный формат в БД) owner_user_id=%s",
+                owner_user_id,
+            )
         for _ in range(32):
             tok = _random_user_link_token()
             try:
@@ -791,9 +800,9 @@ def html_personal_link_block(full_link: str, display_link: str) -> str:
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
-    """qTOKEN → владелец (сначала токен в БД, иначе легаси qЦИФРЫ); s456 → id строки group_invites."""
+    """qTOKEN / vTOKEN → владелец (сначала токен в БД, иначе легаси …ЦИФРЫ); v — как у q для старых ссылок."""
     p = arg.strip()
-    if len(p) >= 2 and p[0] == "q":
+    if len(p) >= 2 and p[0] in ("q", "v"):
         rest = p[1:]
         uid = resolve_user_link_token(rest)
         if uid is not None:
