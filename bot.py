@@ -11,9 +11,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from dotenv import load_dotenv
-from telegram import ReplyKeyboardRemove, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 _ROOT = Path(__file__).resolve().parent
@@ -333,14 +335,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    link = f"https://t.me/{me.username}?start=q{user.id}"
-    text = (
-        "Начните получать анонимные вопросы прямо сейчас!\n\n"
-        f'👉 "{link}"\n\n'
-        "Разместите эту ссылку ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
+    full_link = f"https://t.me/{me.username}?start=q{user.id}"
+    display_link = f"t.me/{me.username}?start=q{user.id}"
+    share_text = "Напиши мне анонимно 💬"
+    share_href = (
+        "https://t.me/share/url?"
+        f"url={quote(full_link, safe='')}&text={quote(share_text, safe='')}"
+    )
+    add_to_chat_href = f"https://t.me/{me.username}?startgroup=start"
+
+    text_html = (
+        "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n"
+        f'👉 <a href="{full_link}">{display_link}</a>\n'
+        "<b>Разместите эту ссылку</b> ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
         "чтобы вам могли написать 💬"
     )
-    await msg.reply_text(text, reply_markup=ReplyKeyboardRemove(), disable_web_page_preview=True)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
+            [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
+        ]
+    )
+    await msg.reply_text(
+        text_html,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 def message_content_type(msg) -> str:
