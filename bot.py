@@ -794,10 +794,10 @@ def clip(s: str, limit: int) -> str:
 
 
 def html_personal_link_block(full_link: str, display_link: str) -> str:
-    """Blockquote + моноширинная кликабельная строка t.me/…"""
+    """Blockquote + кликабельная строка t.me/…"""
     href_esc = html.escape(full_link, quote=True)
     display_esc = html.escape(display_link, quote=False)
-    return f"<blockquote><a href=\"{href_esc}\"><code>{display_esc}</code></a></blockquote>"
+    return f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>"
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
