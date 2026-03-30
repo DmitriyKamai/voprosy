@@ -195,11 +195,12 @@ def init_db() -> None:
 
 
 _LINK_TOKEN_CHARS = string.ascii_letters + string.digits
-_LINK_TOKEN_LEN = 10
+# Как в эталонных ссылках (например c2k2c31) — 7 символов; весь payload ?start= укладывается в лимит Telegram (64).
+_LINK_TOKEN_LEN = 7
 
 
 def _random_user_link_token() -> str:
-    """Непредсказуемый фрагмент для ?start=q… (не только цифры — отличие от старых ссылок)."""
+    """Непредсказуемый фрагмент для ?start=q… (не только цифры — отличие от легаси q123…)."""
     while True:
         t = "".join(secrets.choice(_LINK_TOKEN_CHARS) for _ in range(_LINK_TOKEN_LEN))
         if not t.isdigit():
