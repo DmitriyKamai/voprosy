@@ -1191,7 +1191,7 @@ def extract_text_content(msg) -> str | None:
 def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TEXT) -> str:
     """Текст для получателя: 💬, blockquote с текстом, «Свайпни» (кавычки рисует клиент)."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    tail = "</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
+    tail = "</blockquote>\n\n<i>↩️ Свайпни для ответа.</i>"
     open_bq = "<blockquote>"
     raw = (body or "").strip()
     if not raw:
@@ -1207,7 +1207,7 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 def format_anonymous_media_caption_html(body: str | None) -> str:
     """Тот же визуальный ритм, что и у текстового анонима: заголовок → blockquote → подсказка свайпа."""
     head = "<b>💬 У тебя новое сообщение!</b>\n\n"
-    tail = "</blockquote>\n\n<i>↪️ Свайпни для ответа.</i>"
+    tail = "</blockquote>\n\n<i>↩️ Свайпни для ответа.</i>"
     open_bq = "<blockquote>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
@@ -1218,19 +1218,12 @@ def format_anonymous_media_caption_html(body: str | None) -> str:
     return head + open_bq + mid + tail
 
 
-async def _anon_recipient_markup(bot) -> InlineKeyboardMarkup:
-    """Кнопки для владельца ссылки: чат с ботом и жалоба в поддержку."""
-    me = await bot.get_me()
-    rows: list[list[InlineKeyboardButton]] = []
-    if me.username:
-        rows.append(
-            [InlineKeyboardButton("🗨️ Прокомментировать", url=f"https://t.me/{me.username}")]
-        )
+def _anon_recipient_markup() -> InlineKeyboardMarkup:
+    """Кнопка «Пожаловаться» в поддержку."""
     sup = SUPPORT_USERNAME.lstrip("@")
-    rows.append(
-        [InlineKeyboardButton("🚮 Пожаловаться", url=f"https://t.me/{sup}")]
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🚮 Пожаловаться", url=f"https://t.me/{sup}")]]
     )
-    return InlineKeyboardMarkup(rows)
 
 
 async def _try_send_anonymous_media_with_caption(
@@ -1346,7 +1339,7 @@ async def _deliver_anonymous(
     delivered = False
     try:
         if msg.text and not msg.photo:
-            markup = await _anon_recipient_markup(bot)
+            markup = _anon_recipient_markup()
             try:
                 sent = await bot.send_message(
                     chat_id=dest,
@@ -1363,7 +1356,7 @@ async def _deliver_anonymous(
                 plain = clip(
                     "💬 У тебя новое сообщение!\n\n❝\n"
                     + (msg.text or "")
-                    + "\n❞\n\n↪️ Свайпни для ответа.",
+                    + "\n❞\n\n↩️ Свайпни для ответа.",
                     MAX_TEXT,
                 )
                 sent = await bot.send_message(
@@ -1373,7 +1366,7 @@ async def _deliver_anonymous(
             register_anon_reply_routes(dest, route_ids, sender_uid, row_id)
             delivered = True
         else:
-            markup = await _anon_recipient_markup(bot)
+            markup = _anon_recipient_markup()
             cap_html = format_anonymous_media_caption_html(msg.caption)
             sent_ok, media_ids = await _try_send_anonymous_media_with_caption(
                 bot, dest, msg, cap_html, markup
@@ -1402,7 +1395,7 @@ async def _deliver_anonymous(
                     plain = clip(
                         "💬 У тебя новое сообщение!\n\n❝\n"
                         + ((msg.caption or "").strip() or "📎")
-                        + "\n❞\n\n↪️ Свайпни для ответа.",
+                        + "\n❞\n\n↩️ Свайпни для ответа.",
                         MAX_CAPTION,
                     )
                     r2 = await copied.reply_text(plain, reply_markup=markup)
