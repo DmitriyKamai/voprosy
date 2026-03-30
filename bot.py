@@ -105,22 +105,76 @@ def collect_identifiers(update: Update) -> dict[str, Any]:
     return data
 
 
-def format_phone_line_for_admin(msg) -> str:
-    """Телефон бот видит только если пользователь прислал контакт (vCard)."""
-    if not msg or not msg.contact:
-        return ""
-    c = msg.contact
-    lines = [f"Телефон (пользователь открыл / прислал контакт): {c.phone_number}"]
-    name = " ".join(x for x in (c.first_name, c.last_name) if x)
-    if name:
-        lines.append(f"Имя в контакте: {name}")
-    if c.user_id is not None:
-        lines.append(f"user_id в записи контакта: {c.user_id}")
-    return "\n".join(lines) + "\n\n"
+def _user_display_name(user_dict: dict[str, Any]) -> str:
+    first = (user_dict.get("first_name") or "").strip()
+    last = (user_dict.get("last_name") or "").strip()
+    return " ".join(x for x in (first, last) if x).strip() or "—"
 
 
-def pretty_identifiers(data: dict[str, Any]) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2)
+def format_message_body_for_admin(msg, ctype: str) -> str:
+    """Текст для поля «Сообщение» в уведомлении админу."""
+    if msg.text and not msg.photo:
+        return msg.text
+    if msg.caption:
+        return msg.caption
+    if msg.contact:
+        c = msg.contact
+        lines = [f"Контакт, телефон: {c.phone_number}"]
+        card_name = " ".join(x for x in (c.first_name, c.last_name) if x)
+        if card_name:
+            lines.append(f"В карточке: {card_name}")
+        if c.user_id is not None:
+            lines.append(f"user_id в контакте: {c.user_id}")
+        return "\n".join(lines)
+    if msg.location:
+        return f"Координаты: {msg.location.latitude}, {msg.location.longitude}"
+    if msg.poll:
+        return msg.poll.question
+    if msg.sticker:
+        em = (msg.sticker.emoji or "").strip()
+        return ("Стикер " + em).strip() if em else "Стикер"
+    if msg.document and msg.document.file_name:
+        return f"Файл: {msg.document.file_name}"
+    if msg.audio:
+        if msg.audio.title:
+            return f"Аудио: {msg.audio.title}"
+        if msg.audio.file_name:
+            return f"Аудио: {msg.audio.file_name}"
+    labels = {
+        "photo": "Фотография (без подписи)",
+        "video": "Видео (без подписи)",
+        "document": "Документ",
+        "voice": "Голосовое сообщение",
+        "video_note": "Видеосообщение (кружок)",
+        "audio": "Аудио",
+        "animation": "GIF / анимация",
+        "poll": "Опрос",
+        "other": "Вложение",
+    }
+    return labels.get(ctype, f"Вложение ({ctype})")
+
+
+def build_admin_notification_text(
+    row_id: int,
+    ctype: str,
+    identifiers: dict[str, Any],
+    msg,
+) -> str:
+    u = identifiers.get("user") or {}
+    name = _user_display_name(u)
+    uname = u.get("username")
+    username_line = f"@{uname}" if uname else "—"
+    uid = u.get("id")
+    id_line = str(uid) if uid is not None else "—"
+    body = format_message_body_for_admin(msg, ctype)
+    return (
+        f"📥 Подслушано — запись #{row_id}\n"
+        f"Тип: {ctype}\n\n"
+        f"Имя: {name}\n"
+        f"Username: {username_line}\n"
+        f"ID: {id_line}\n\n"
+        f"Сообщение:\n{body}"
+    )
 
 
 def save_submission(
@@ -228,10 +282,8 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     identifiers = collect_identifiers(update)
-    ids_block = pretty_identifiers(identifiers)
     ctype = message_content_type(msg)
     text_part = extract_text_content(msg)
-    phone_block = format_phone_line_for_admin(msg)
 
     raw_msg = _to_dict(msg)
 
@@ -245,22 +297,16 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         raw_message=raw_msg,
     )
 
-    header = (
-        f"📥 Подслушано — запись #{row_id}\n"
-        f"Тип: {ctype}\n"
-        f"{phone_block}"
-        f"Идентификаторы (JSON):\n{clip(ids_block, MAX_TEXT - 400)}"
-    )
+    admin_text = build_admin_notification_text(row_id, ctype, identifiers, msg)
 
     bot = context.bot
     chat = update.effective_chat
 
     try:
         if msg.text and not msg.photo:
-            body = f"\n\nТекст:\n{clip(msg.text, MAX_TEXT - len(header))}"
             await bot.send_message(
                 chat_id=admin_id,
-                text=clip(header + body, MAX_TEXT),
+                text=clip(admin_text, MAX_TEXT),
             )
         else:
             copied = await bot.copy_message(
@@ -268,19 +314,10 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 from_chat_id=chat.id,
                 message_id=msg.message_id,
             )
-            admin_header = (
-                f"📥 Подслушано — запись #{row_id}\n"
-                f"Тип: {ctype}\n"
-                f"{phone_block}"
-                f"Идентификаторы:\n{clip(ids_block, MAX_CAPTION)}"
-            )
-            await copied.reply_text(admin_header)
+            await copied.reply_text(clip(admin_text, MAX_CAPTION))
     except Exception:
-        logger.exception("Не удалось отправить админу; пробуем текстом целиком")
-        fallback = f"{header}\n\n(медиа не скопировано — откройте запись в БД id={row_id})"
-        if text_part:
-            fallback += f"\n\nПодпись/текст: {text_part}"
-        await bot.send_message(chat_id=admin_id, text=clip(fallback, MAX_TEXT))
+        logger.exception("Не удалось отправить админу; дублируем одним текстом")
+        await bot.send_message(chat_id=admin_id, text=clip(admin_text, MAX_TEXT))
 
     await msg.reply_text("Сообщение получено и передано.")
 
