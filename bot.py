@@ -22,6 +22,7 @@ from telegram import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     ReplyKeyboardRemove,
+    ReplyParameters,
     Update,
 )
 from telegram.constants import ParseMode
@@ -239,6 +240,62 @@ def lookup_anon_reply_route(
     if not row:
         return None
     return int(row[0]), int(row[1])
+
+
+def fetch_submission_for_reply(
+    submission_id: int,
+) -> tuple[str | None, int | None, int | None] | None:
+    """Текст анонима и получатель для оформления ответа; None если записи нет."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT text_content, recipient_user_id, recipient_chat_id
+            FROM submissions WHERE id = ?
+            """,
+            (submission_id,),
+        ).fetchone()
+    if not row:
+        return None
+    tc, ru, rc = row[0], row[1], row[2]
+    return (
+        str(tc) if tc is not None else None,
+        int(ru) if ru is not None else None,
+        int(rc) if rc is not None else None,
+    )
+
+
+async def keyboard_write_more_for_sender(
+    bot,
+    recipient_user_id: int | None,
+    recipient_chat_id: int | None,
+) -> InlineKeyboardMarkup | None:
+    """Ссылка для повторной анонимной отправки тому же получателю."""
+    me = await bot.get_me()
+    if not me.username:
+        return None
+    if recipient_user_id is not None:
+        url = f"https://t.me/{me.username}?start=q{recipient_user_id}"
+    elif recipient_chat_id is not None:
+        inv = get_or_create_group_invite_row_id(recipient_chat_id)
+        url = f"https://t.me/{me.username}?start=s{inv}"
+    else:
+        return None
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Написать ещё ✍️", url=url)]]
+    )
+
+
+def format_owner_reply_for_sender_html(
+    owner_name: str, original_anon_snippet: str, owner_reply_text: str
+) -> str:
+    """Цитата с именем + исходный аноним + текст ответа (как в макете)."""
+    o = clip(original_anon_snippet.strip() or "📎", 900)
+    body = clip(owner_reply_text, MAX_TEXT - 400)
+    return (
+        f"<blockquote><b>{html.escape(owner_name)}</b>\n"
+        f"{html.escape(o)}</blockquote>\n\n"
+        f"{html.escape(body)}"
+    )
 
 
 def get_or_create_group_invite_row_id(chat_id: int) -> int:
@@ -1275,20 +1332,75 @@ async def handle_owner_reply_to_anonymous_sender(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     anon_sender_user_id: int,
-    _submission_id: int,
+    submission_id: int,
 ) -> None:
-    """Ответ получателя (свайп на аноним) → копия отправителю и подтверждение владельцу."""
+    """Ответ получателя (свайп на аноним) → отправителю в макете с цитатой и кнопкой «Написать ещё»."""
     msg = update.effective_message
     if not msg:
         return
     bot = context.bot
     owner_chat_id = msg.chat_id
-    try:
-        await bot.copy_message(
-            chat_id=anon_sender_user_id,
-            from_chat_id=owner_chat_id,
-            message_id=msg.message_id,
+    owner_name = _user_display_name(_to_dict(msg.from_user) or {})
+
+    sub = fetch_submission_for_reply(submission_id)
+    if sub is None:
+        try:
+            await bot.copy_message(
+                chat_id=anon_sender_user_id,
+                from_chat_id=owner_chat_id,
+                message_id=msg.message_id,
+            )
+        except Exception:
+            logger.exception(
+                "Не удалось доставить ответ (нет submission) user=%s",
+                anon_sender_user_id,
+            )
+            await msg.reply_text(
+                "Не удалось доставить ответ. Возможно, отправитель заблокировал бота."
+            )
+            return
+        await msg.reply_text(
+            "<b>✅ Ответ успешно отправлен</b>\n\n"
+            "<i>Статистика — /stats</i>",
+            parse_mode=ParseMode.HTML,
         )
+        return
+
+    text_content, rec_uid, rec_cid = sub
+    original = (text_content or "").strip() or "📎"
+    kb = await keyboard_write_more_for_sender(bot, rec_uid, rec_cid)
+
+    try:
+        if msg.text and not msg.photo:
+            body_html = format_owner_reply_for_sender_html(
+                owner_name, original, msg.text or ""
+            )
+            await bot.send_message(
+                chat_id=anon_sender_user_id,
+                text=body_html,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+        else:
+            header = (
+                f"<blockquote><b>{html.escape(owner_name)}</b>\n"
+                f"{html.escape(clip(original, 900))}</blockquote>"
+            )
+            sent = await bot.send_message(
+                chat_id=anon_sender_user_id,
+                text=header,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+            await bot.copy_message(
+                chat_id=anon_sender_user_id,
+                from_chat_id=owner_chat_id,
+                message_id=msg.message_id,
+                reply_parameters=ReplyParameters(
+                    message_id=sent.message_id,
+                    chat_id=anon_sender_user_id,
+                ),
+            )
     except Exception:
         logger.exception(
             "Не удалось доставить ответ владельца анонимному отправителю user=%s",
