@@ -55,6 +55,8 @@ MAX_TEXT = 4000
 TELEGRAM_MEDIA_CAPTION_MAX = 1024
 
 CB_CANCEL_ANON = "cancel_anon"
+CB_ANON_SENT_WRITE_MORE = "anon_wm"
+CB_ANON_SENT_DELETE_PREFIX = "anon_del:"
 
 TEXT_AFTER_USER_LINK_HTML = (
     "🚀 Здесь можно отправить <b>анонимное сообщение</b> человеку, который опубликовал эту ссылку\n\n"
@@ -73,6 +75,21 @@ TEXT_AFTER_GROUP_LINK_HTML = (
 KEYBOARD_CANCEL_ANON = InlineKeyboardMarkup(
     [[InlineKeyboardButton("✖️ Отменить", callback_data=CB_CANCEL_ANON)]]
 )
+
+
+def keyboard_after_anonymous_sent(user_message_id: int) -> InlineKeyboardMarkup:
+    """После успешной анонимной отправки: ещё одно сообщение или удалить след в чате."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Написать ещё ✍️", callback_data=CB_ANON_SENT_WRITE_MORE)],
+            [
+                InlineKeyboardButton(
+                    "Удалить сообщение 🗑️",
+                    callback_data=f"{CB_ANON_SENT_DELETE_PREFIX}{user_message_id}",
+                )
+            ],
+        ]
+    )
 
 # Москва = UTC+3 (без летнего времени с 2014 г.; без зависимости tzdata на Windows)
 MSK_TZ = timezone(timedelta(hours=3), name="MSK")
@@ -709,6 +726,48 @@ async def cancel_anon_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await q.message.reply_text("Режим анонимной отправки отключён.")
 
 
+async def anon_sent_write_more_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Убираем кнопки; отправитель может прислать ещё одно анонимное сообщение."""
+    q = update.callback_query
+    if not q or not q.message:
+        return
+    await q.answer("Можно отправить ещё одно сообщение.")
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        logger.exception("Не удалось убрать кнопки после «Написать ещё»")
+
+
+async def anon_sent_delete_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Удаляем подтверждение бота и исходное сообщение отправителя (если получится)."""
+    q = update.callback_query
+    if not q or not q.message or not q.data:
+        return
+    if not q.data.startswith(CB_ANON_SENT_DELETE_PREFIX):
+        return
+    tail = q.data[len(CB_ANON_SENT_DELETE_PREFIX) :]
+    try:
+        user_mid = int(tail)
+    except ValueError:
+        await q.answer("Некорректные данные.", show_alert=True)
+        return
+    await q.answer()
+    bot = context.bot
+    cid = q.message.chat_id
+    try:
+        await bot.delete_message(chat_id=cid, message_id=q.message.message_id)
+    except Exception:
+        logger.exception("Не удалось удалить сообщение-подтверждение")
+    try:
+        await bot.delete_message(chat_id=cid, message_id=user_mid)
+    except Exception:
+        logger.exception("Не удалось удалить исходное сообщение отправителя")
+
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Статистика: в личке — профиль; в группе — анонимная ссылка чата."""
     msg = update.effective_message
@@ -1111,7 +1170,10 @@ async def _deliver_anonymous(
         await send_admin_message_copy(bot, admin_id, chat.id, msg, admin_text)
 
     if delivered:
-        await msg.reply_text("Отправлено.")
+        await msg.reply_text(
+            "Сообщение отправлено, ожидайте ответ!",
+            reply_markup=keyboard_after_anonymous_sent(msg.message_id),
+        )
 
 
 async def inline_share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1199,6 +1261,14 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(cancel_anon_callback, pattern=f"^{CB_CANCEL_ANON}$"))
+    app.add_handler(
+        CallbackQueryHandler(anon_sent_write_more_callback, pattern=f"^{CB_ANON_SENT_WRITE_MORE}$")
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            anon_sent_delete_callback, pattern=f"^{CB_ANON_SENT_DELETE_PREFIX}\\d+$"
+        )
+    )
     app.add_handler(InlineQueryHandler(inline_share))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("issue", issue_cmd))
