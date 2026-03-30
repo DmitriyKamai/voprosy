@@ -1498,7 +1498,6 @@ async def _deliver_anonymous(
                 recipient_chat_id=to_chat_id,
             ),
         )
-        # Как при первом открытии ссылки /start с payload: снова инструкция и «Отменить».
         intro_html = (
             TEXT_AFTER_USER_LINK_HTML
             if to_user_id is not None
