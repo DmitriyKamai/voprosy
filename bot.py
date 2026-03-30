@@ -11,6 +11,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import quote
 
@@ -160,6 +161,21 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_glclicks_chat ON group_link_clicks(group_chat_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS anon_reply_routes (
+                dest_chat_id INTEGER NOT NULL,
+                bot_message_id INTEGER NOT NULL,
+                anon_sender_user_id INTEGER NOT NULL,
+                submission_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (dest_chat_id, bot_message_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_anon_route_dest ON anon_reply_routes(dest_chat_id)"
+        )
         conn.commit()
 
 
@@ -183,6 +199,46 @@ def log_group_link_click(group_chat_id: int) -> None:
             (group_chat_id, created),
         )
         conn.commit()
+
+
+def register_anon_reply_routes(
+    dest_chat_id: int,
+    bot_message_ids: Sequence[int],
+    anon_sender_user_id: int,
+    submission_id: int,
+) -> None:
+    """Связь «сообщение бота у получателя» → id отправителя анонима (для ответа свайпом)."""
+    if not bot_message_ids:
+        return
+    created = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        for mid in bot_message_ids:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO anon_reply_routes
+                (dest_chat_id, bot_message_id, anon_sender_user_id, submission_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (dest_chat_id, int(mid), anon_sender_user_id, submission_id, created),
+            )
+        conn.commit()
+
+
+def lookup_anon_reply_route(
+    dest_chat_id: int, reply_to_bot_message_id: int
+) -> tuple[int, int] | None:
+    """(anon_sender_user_id, submission_id) или None."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT anon_sender_user_id, submission_id FROM anon_reply_routes
+            WHERE dest_chat_id = ? AND bot_message_id = ?
+            """,
+            (dest_chat_id, reply_to_bot_message_id),
+        ).fetchone()
+    if not row:
+        return None
+    return int(row[0]), int(row[1])
 
 
 def get_or_create_group_invite_row_id(chat_id: int) -> int:
@@ -996,7 +1052,7 @@ async def _try_send_anonymous_media_with_caption(
     msg,
     caption: str,
     reply_markup: InlineKeyboardMarkup,
-) -> bool:
+) -> tuple[bool, list[int]]:
     """Одно медиа + подпись + клавиатура; для стикера — стикер и отдельное сообщение с текстом."""
     kw: dict[str, Any] = {
         "chat_id": dest,
@@ -1006,49 +1062,49 @@ async def _try_send_anonymous_media_with_caption(
     }
     try:
         if msg.photo:
-            await bot.send_photo(photo=msg.photo[-1].file_id, **kw)
-            return True
+            m = await bot.send_photo(photo=msg.photo[-1].file_id, **kw)
+            return True, [m.message_id]
         if msg.video:
-            await bot.send_video(video=msg.video.file_id, **kw)
-            return True
+            m = await bot.send_video(video=msg.video.file_id, **kw)
+            return True, [m.message_id]
         if msg.animation:
-            await bot.send_animation(animation=msg.animation.file_id, **kw)
-            return True
+            m = await bot.send_animation(animation=msg.animation.file_id, **kw)
+            return True, [m.message_id]
         if msg.document:
-            await bot.send_document(document=msg.document.file_id, **kw)
-            return True
+            m = await bot.send_document(document=msg.document.file_id, **kw)
+            return True, [m.message_id]
         if msg.voice:
-            await bot.send_voice(voice=msg.voice.file_id, **kw)
-            return True
+            m = await bot.send_voice(voice=msg.voice.file_id, **kw)
+            return True, [m.message_id]
         if msg.audio:
-            await bot.send_audio(audio=msg.audio.file_id, **kw)
-            return True
+            m = await bot.send_audio(audio=msg.audio.file_id, **kw)
+            return True, [m.message_id]
         if msg.video_note:
             sent = await bot.send_video_note(chat_id=dest, video_note=msg.video_note.file_id)
-            await bot.send_message(
+            m2 = await bot.send_message(
                 chat_id=dest,
                 text=caption,
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup,
                 reply_to_message_id=sent.message_id,
             )
-            return True
+            return True, [sent.message_id, m2.message_id]
         if msg.sticker:
             sent = await bot.send_sticker(chat_id=dest, sticker=msg.sticker.file_id)
-            await bot.send_message(
+            m2 = await bot.send_message(
                 chat_id=dest,
                 text=caption,
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup,
                 reply_to_message_id=sent.message_id,
             )
-            return True
+            return True, [sent.message_id, m2.message_id]
     except Exception:
         logger.exception(
             "Прямая отправка анонимного медиа с подписью не удалась dest=%s",
             dest,
         )
-    return False
+    return False, []
 
 
 async def _deliver_anonymous(
@@ -1099,17 +1155,19 @@ async def _deliver_anonymous(
         row_id, ctype, owner_block, sender_dict, msg
     )
 
+    sender_uid = update.effective_user.id
     delivered = False
     try:
         if msg.text and not msg.photo:
             markup = await _anon_recipient_markup(bot)
             try:
-                await bot.send_message(
+                sent = await bot.send_message(
                     chat_id=dest,
                     text=format_anonymous_recipient_html(msg.text, max_total=MAX_TEXT),
                     parse_mode=ParseMode.HTML,
                     reply_markup=markup,
                 )
+                route_ids = [sent.message_id]
             except Exception:
                 logger.exception(
                     "HTML-шаблон анонимного текста не принят API, пробуем без разметки dest=%s",
@@ -1121,26 +1179,34 @@ async def _deliver_anonymous(
                     + "\n\n↪️ Свайпни для ответа.",
                     MAX_TEXT,
                 )
-                await bot.send_message(chat_id=dest, text=plain, reply_markup=markup)
+                sent = await bot.send_message(
+                    chat_id=dest, text=plain, reply_markup=markup
+                )
+                route_ids = [sent.message_id]
+            register_anon_reply_routes(dest, route_ids, sender_uid, row_id)
             delivered = True
         else:
             markup = await _anon_recipient_markup(bot)
             cap_html = format_anonymous_media_caption_html(msg.caption)
-            sent_ok = await _try_send_anonymous_media_with_caption(
+            sent_ok, media_ids = await _try_send_anonymous_media_with_caption(
                 bot, dest, msg, cap_html, markup
             )
-            if not sent_ok:
+            if sent_ok:
+                register_anon_reply_routes(dest, media_ids, sender_uid, row_id)
+            else:
                 copied = await bot.copy_message(
                     chat_id=dest,
                     from_chat_id=chat.id,
                     message_id=msg.message_id,
                 )
+                route_ids: list[int] = [copied.message_id]
                 try:
-                    await copied.reply_text(
+                    r = await copied.reply_text(
                         cap_html,
                         parse_mode=ParseMode.HTML,
                         reply_markup=markup,
                     )
+                    route_ids.append(r.message_id)
                 except Exception:
                     logger.exception(
                         "Запасной ответ с подписью к copy_message не прошёл dest=%s",
@@ -1152,7 +1218,9 @@ async def _deliver_anonymous(
                         + "\n\n↪️ Свайпни для ответа.",
                         MAX_CAPTION,
                     )
-                    await copied.reply_text(plain, reply_markup=markup)
+                    r2 = await copied.reply_text(plain, reply_markup=markup)
+                    route_ids.append(r2.message_id)
+                register_anon_reply_routes(dest, route_ids, sender_uid, row_id)
             delivered = True
     except Exception:
         logger.exception(
@@ -1203,10 +1271,57 @@ async def inline_share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await iq.answer([res], cache_time=1, is_personal=True)
 
 
+async def handle_owner_reply_to_anonymous_sender(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    anon_sender_user_id: int,
+    _submission_id: int,
+) -> None:
+    """Ответ получателя (свайп на аноним) → копия отправителю и подтверждение владельцу."""
+    msg = update.effective_message
+    if not msg:
+        return
+    bot = context.bot
+    owner_chat_id = msg.chat_id
+    try:
+        await bot.copy_message(
+            chat_id=anon_sender_user_id,
+            from_chat_id=owner_chat_id,
+            message_id=msg.message_id,
+        )
+    except Exception:
+        logger.exception(
+            "Не удалось доставить ответ владельца анонимному отправителю user=%s",
+            anon_sender_user_id,
+        )
+        await msg.reply_text(
+            "Не удалось доставить ответ. Возможно, отправитель заблокировал бота."
+        )
+        return
+
+    await msg.reply_text(
+        "<b>✅ Ответ успешно отправлен</b>\n\n"
+        "<i>Статистика — /stats</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     if not msg:
         return
+
+    if msg.reply_to_message:
+        route = lookup_anon_reply_route(msg.chat_id, msg.reply_to_message.message_id)
+        if route is not None:
+            anon_uid, sub_id = route
+            if msg.text and msg.text.strip().startswith("/"):
+                pass
+            else:
+                await handle_owner_reply_to_anonymous_sender(
+                    update, context, anon_uid, sub_id
+                )
+                return
 
     chat_target = context.user_data.get("anon_target_chat_id")
     user_target = context.user_data.get("anon_target_user_id")
