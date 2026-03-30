@@ -1,6 +1,5 @@
 """
-Бот «Подслушано»: принимает сообщения пользователей, сохраняет их и дублирует админу
-со всеми доступными идентификаторами из Telegram Bot API.
+Бот «Подслушано»: персональная ссылка для анонимных вопросов; по желанию — копия админу.
 """
 
 from __future__ import annotations
@@ -57,10 +56,14 @@ def init_db() -> None:
                 content_type TEXT,
                 text_content TEXT,
                 identifiers_json TEXT NOT NULL,
-                raw_message_json TEXT
+                raw_message_json TEXT,
+                recipient_user_id INTEGER
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
+        if "recipient_user_id" not in cols:
+            conn.execute("ALTER TABLE submissions ADD COLUMN recipient_user_id INTEGER")
         conn.commit()
 
 
@@ -186,6 +189,7 @@ def save_submission(
     text_content: str | None,
     identifiers: dict[str, Any],
     raw_message: dict[str, Any] | None,
+    recipient_user_id: int | None = None,
 ) -> int:
     created = datetime.now(timezone.utc).isoformat()
     identifiers_json = json.dumps(identifiers, ensure_ascii=False)
@@ -195,8 +199,8 @@ def save_submission(
             """
             INSERT INTO submissions
             (created_at, user_id, chat_id, message_id, content_type, text_content,
-             identifiers_json, raw_message_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             identifiers_json, raw_message_json, recipient_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 created,
@@ -207,6 +211,7 @@ def save_submission(
                 text_content,
                 identifiers_json,
                 raw_json,
+                recipient_user_id,
             ),
         )
         conn.commit()
@@ -219,13 +224,50 @@ def clip(s: str, limit: int) -> str:
     return s[: limit - 20] + "\n… (обрезано)"
 
 
+def _parse_anon_target_start(args: list[str]) -> int | None:
+    """Deep link: /start q<telegram_user_id> (латиница q + цифры)."""
+    if not args:
+        return None
+    payload = args[0].strip()
+    if len(payload) >= 2 and payload[0] == "q" and payload[1:].isdigit():
+        return int(payload[1:])
+    return None
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text(
-        "Напишите сюда всё, что нужно передать анонимно или для учёта — "
-        "сообщение будет сохранено и передано администратору вместе с вашими "
-        "техническими идентификаторами в Telegram (как видит бот).",
-        reply_markup=ReplyKeyboardRemove(),
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+
+    target = _parse_anon_target_start(context.args or [])
+    if target is not None:
+        context.user_data["anon_target_id"] = target
+        await msg.reply_text(
+            "Напишите сообщение — оно уйдёт анонимно человеку, который дал вам ссылку.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    context.user_data.pop("anon_target_id", None)
+
+    bot = context.bot
+    me = await bot.get_me()
+    if not me.username:
+        await msg.reply_text(
+            "У бота нет username в Telegram — задайте его в @BotFather, иначе ссылку нельзя сделать.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    link = f"https://t.me/{me.username}?start=q{user.id}"
+    text = (
+        "Начните получать анонимные вопросы прямо сейчас!\n\n"
+        f'👉 "{link}"\n\n'
+        "Разместите эту ссылку ☝️ в описании своего профиля Telegram, TikTok, Instagram (stories), "
+        "чтобы вам могли написать 💬"
     )
+    await msg.reply_text(text, reply_markup=ReplyKeyboardRemove(), disable_web_page_preview=True)
 
 
 def message_content_type(msg) -> str:
@@ -269,16 +311,80 @@ def extract_text_content(msg) -> str | None:
     return None
 
 
-async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_id = _admin_user_id()
-    if admin_id is None:
-        logger.error("Не задан ADMIN_USER_ID — куда слать сообщения админу")
-        if update.effective_message:
-            await update.effective_message.reply_text("Бот не настроен. Обратитесь к владельцу.")
+ANON_HEADER = "💬 Анонимное сообщение\n\n"
+
+
+async def _deliver_anonymous_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    recipient_id: int,
+) -> None:
+    """Доставка получателю без раскрытия отправителя в тексте."""
+    msg = update.effective_message
+    if not msg or not update.effective_user:
         return
 
+    bot = context.bot
+    chat = update.effective_chat
+    identifiers = collect_identifiers(update)
+    ctype = message_content_type(msg)
+    text_part = extract_text_content(msg)
+    raw_msg = _to_dict(msg)
+
+    save_submission(
+        user_id=update.effective_user.id,
+        chat_id=chat.id,
+        message_id=msg.message_id,
+        content_type=ctype,
+        text_content=text_part,
+        identifiers=identifiers,
+        raw_message=raw_msg,
+        recipient_user_id=recipient_id,
+    )
+
+    try:
+        if msg.text and not msg.photo:
+            await bot.send_message(
+                chat_id=recipient_id,
+                text=clip(ANON_HEADER + msg.text, MAX_TEXT),
+            )
+        else:
+            copied = await bot.copy_message(
+                chat_id=recipient_id,
+                from_chat_id=chat.id,
+                message_id=msg.message_id,
+            )
+            tail = ANON_HEADER.strip()
+            if msg.caption:
+                tail += "\n\n" + msg.caption
+            await copied.reply_text(clip(tail, MAX_CAPTION))
+    except Exception:
+        logger.exception("Не удалось доставить анонимное сообщение user_id=%s", recipient_id)
+        await msg.reply_text(
+            "Не удалось доставить. Часто так бывает, если получатель ещё ни разу не нажимал "
+            "/start у этого бота — пусть откроет бота и нажмёт «Start»."
+        )
+        return
+
+    await msg.reply_text("Отправлено.")
+
+
+async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     if not msg:
+        return
+
+    recipient_id = context.user_data.get("anon_target_id")
+    if recipient_id is not None:
+        await _deliver_anonymous_message(update, context, int(recipient_id))
+        return
+
+    admin_id = _admin_user_id()
+    if admin_id is None:
+        await msg.reply_text(
+            "Нажмите /start — бот покажет вашу ссылку для анонимных вопросов.\n"
+            "Чтобы написать кому-то анонимно, откройте именно его ссылку (не просто бота)."
+        )
         return
 
     identifiers = collect_identifiers(update)
@@ -295,6 +401,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         text_content=text_part,
         identifiers=identifiers,
         raw_message=raw_msg,
+        recipient_user_id=None,
     )
 
     admin_text = build_admin_notification_text(row_id, ctype, identifiers, msg)
@@ -329,7 +436,7 @@ def main() -> None:
     init_db()
     admin = _admin_user_id()
     if admin is None:
-        logger.warning("ADMIN_USER_ID не задан — уведомления админу работать не будут")
+        logger.info("ADMIN_USER_ID не задан — режим только личных ссылок и анонимных сообщений")
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
