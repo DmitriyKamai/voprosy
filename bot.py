@@ -794,10 +794,12 @@ def clip(s: str, limit: int) -> str:
 
 
 def html_personal_link_block(full_link: str, display_link: str) -> str:
-    """Единый блок: цитата Telegram + кликабельная строка t.me/… (как в /start и /stats)."""
+    """Как в макете: blockquote + моноширинная строка ссылки + декоративная ❞, ссылка кликабельна."""
     href_esc = html.escape(full_link, quote=True)
     display_esc = html.escape(display_link, quote=False)
-    return f"<blockquote><a href=\"{href_esc}\">{display_esc}</a></blockquote>"
+    return (
+        f"<blockquote><a href=\"{href_esc}\"><code>{display_esc}❞</code></a></blockquote>"
+    )
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
@@ -880,16 +882,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо в этом чате!</b>\n\n"
-            "<b>Ваша ссылка</b>\n"
+            "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "<b>Разместите ссылку</b> в описании профиля Telegram, TikTok, Instagram (stories) — "
-            "так вам смогут написать 💬\n\n"
-            "⚠️ <b>В чате отвечать на анонимы могут все участники</b>"
+            "Разместите эту ссылку 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "чтобы вам могли написать 💬\n\n"
+            "❗ <b>Отвечать на сообщения могут все участники чата</b>"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат ↗️", url=add_to_chat_href)],
             ]
         )
     else:
@@ -904,15 +906,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         link_block = html_personal_link_block(full_link, display_link)
         text_html = (
             "<b>Начните получать анонимные вопросы прямо сейчас!</b>\n\n"
-            "<b>Ваша ссылка</b>\n"
+            "Ваша ссылка:\n"
             f"{link_block}\n\n"
-            "<b>Разместите ссылку</b> в описании профиля Telegram, TikTok, Instagram (stories) — "
-            "так вам смогут написать 💬"
+            "Разместите эту ссылку 👆 в описании своего профиля Telegram, TikTok, Instagram (stories), "
+            "чтобы вам могли написать"
         )
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)],
-                [InlineKeyboardButton("👥 Добавить бота в чат ↗", url=add_to_chat_href)],
+                [InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)],
+                [InlineKeyboardButton("👥 Добавить бота в чат ↗️", url=add_to_chat_href)],
             ]
         )
 
@@ -1030,7 +1032,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"👀 Переходов по ссылке: {c_all}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "<b>Ссылка для распространения</b>\n"
+            "Ваша ссылка:\n"
             f"{link_block}\n\n"
             "<i>Чем чаще ей делятся, тем выше ⭐ популярность чата.</i>"
         )
@@ -1068,13 +1070,13 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"👀 Переходов по ссылке: {c_all}\n"
             f"⭐ Популярность: {pop_esc}"
             "</blockquote>\n\n"
-            "<b>Ваша ссылка</b>\n"
+            "Ваша ссылка:\n"
             f"{link_block}\n\n"
             "<i>Делитесь ею чаще — растёт ⭐ популярность профиля.</i>"
         )
 
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔗 Поделиться ссылкой ↗", url=share_href)]]
+        [[InlineKeyboardButton("🔗 Поделиться ссылкой ↗️", url=share_href)]]
     )
     await msg.reply_text(
         text_html,
