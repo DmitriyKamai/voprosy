@@ -8,7 +8,9 @@ import html
 import json
 import logging
 import os
+import secrets
 import sqlite3
+import string
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Sequence
@@ -177,7 +179,71 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_anon_route_dest ON anon_reply_routes(dest_chat_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_link_tokens (
+                token TEXT PRIMARY KEY,
+                owner_user_id INTEGER NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ult_owner ON user_link_tokens(owner_user_id)"
+        )
         conn.commit()
+
+
+_LINK_TOKEN_CHARS = string.ascii_letters + string.digits
+_LINK_TOKEN_LEN = 10
+
+
+def _random_user_link_token() -> str:
+    """Непредсказуемый фрагмент для ?start=q… (не только цифры — отличие от старых ссылок)."""
+    while True:
+        t = "".join(secrets.choice(_LINK_TOKEN_CHARS) for _ in range(_LINK_TOKEN_LEN))
+        if not t.isdigit():
+            return t
+
+
+def get_or_create_user_link_token(owner_user_id: int) -> str:
+    """Стабильный случайный токен владельца для персональной ссылки (без открытого user id)."""
+    created = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT token FROM user_link_tokens WHERE owner_user_id = ?",
+            (owner_user_id,),
+        ).fetchone()
+        if row:
+            return str(row[0])
+        for _ in range(32):
+            tok = _random_user_link_token()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO user_link_tokens (token, owner_user_id, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (tok, owner_user_id, created),
+                )
+                conn.commit()
+                return tok
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                continue
+    raise RuntimeError("Не удалось выделить токен ссылки")
+
+
+def resolve_user_link_token(token: str) -> int | None:
+    """user id владельца по токену или None."""
+    if not token or len(token) > 64:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT owner_user_id FROM user_link_tokens WHERE token = ?",
+            (token,),
+        ).fetchone()
+    return int(row[0]) if row else None
 
 
 def log_user_link_click(owner_user_id: int) -> None:
@@ -274,7 +340,8 @@ async def keyboard_write_more_for_sender(
     if not me.username:
         return None
     if recipient_user_id is not None:
-        url = f"https://t.me/{me.username}?start=q{recipient_user_id}"
+        tok = get_or_create_user_link_token(recipient_user_id)
+        url = f"https://t.me/{me.username}?start=q{tok}"
     elif recipient_chat_id is not None:
         inv = get_or_create_group_invite_row_id(recipient_chat_id)
         url = f"https://t.me/{me.username}?start=s{inv}"
@@ -704,10 +771,16 @@ def clip(s: str, limit: int) -> str:
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
-    """q123 → пользователь; s456 → id строки group_invites."""
+    """qTOKEN → владелец (токен в БД или легаси qЦИФРЫ); s456 → id строки group_invites."""
     p = arg.strip()
-    if len(p) >= 2 and p[0] == "q" and p[1:].isdigit():
-        return ("user", int(p[1:]))
+    if len(p) >= 2 and p[0] == "q":
+        rest = p[1:]
+        if rest.isdigit():
+            return ("user", int(rest))
+        uid = resolve_user_link_token(rest)
+        if uid is not None:
+            return ("user", uid)
+        return None
     if len(p) >= 2 and p[0] == "s" and p[1:].isdigit():
         return ("group_invite", int(p[1:]))
     return None
@@ -797,8 +870,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ]
         )
     else:
-        full_link = f"https://t.me/{me.username}?start=q{user.id}"
-        display_link = f"t.me/{me.username}?start=q{user.id}"
+        utok = get_or_create_user_link_token(user.id)
+        full_link = f"https://t.me/{me.username}?start=q{utok}"
+        display_link = f"t.me/{me.username}?start=q{utok}"
         share_text = "Напиши мне анонимно 💬"
         share_href = (
             "https://t.me/share/url?"
@@ -947,8 +1021,9 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             c_all = _count_link_clicks_for_owner(conn, uid, None)
             pop = _popularity_place(conn, uid)
 
-        full_link = f"https://t.me/{me.username}?start=q{uid}"
-        display_link = f"t.me/{me.username}?start=q{uid}"
+        utok = get_or_create_user_link_token(uid)
+        full_link = f"https://t.me/{me.username}?start=q{utok}"
+        display_link = f"t.me/{me.username}?start=q{utok}"
         share_text = "Напиши мне анонимно 💬"
         share_href = (
             "https://t.me/share/url?"
@@ -1315,7 +1390,7 @@ async def _deliver_anonymous(
 
 
 async def inline_share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """В любом чате: вставить готовое сообщение с персональной ссылкой q{user_id}."""
+    """В любом чате: вставить готовое сообщение с персональной ссылкой (?start=qTOKEN)."""
     iq = update.inline_query
     if not iq or not iq.from_user:
         return
@@ -1324,7 +1399,8 @@ async def inline_share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await iq.answer([], cache_time=0)
         return
     uid = iq.from_user.id
-    link = f"https://t.me/{me.username}?start=q{uid}"
+    utok = get_or_create_user_link_token(uid)
+    link = f"https://t.me/{me.username}?start=q{utok}"
     text = f"Напиши мне анонимно 💬\n{link}"
     res = InlineQueryResultArticle(
         id="anon_personal",
