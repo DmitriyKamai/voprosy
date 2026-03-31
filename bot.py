@@ -52,6 +52,10 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_USER_ID_RAW = os.environ.get("ADMIN_USER_ID", "").strip()
 _support_raw = os.environ.get("SUPPORT_USERNAME", "quesupport").strip().lstrip("@")
 SUPPORT_USERNAME = _support_raw or "quesupport"
+# Кастомное эмодзи в заголовке «У тебя новое сообщение!» (см. ANON_NEW_MESSAGE_CUSTOM_EMOJI_ID в .env.example).
+ANON_NEW_MESSAGE_CUSTOM_EMOJI_ID = os.environ.get(
+    "ANON_NEW_MESSAGE_CUSTOM_EMOJI_ID", ""
+).strip()
 
 MAX_CAPTION = 3500
 MAX_TEXT = 4000
@@ -1257,9 +1261,19 @@ def extract_text_content(msg) -> str | None:
     return None
 
 
+def _anon_new_message_head_html() -> str:
+    """Заголовок с <tg-emoji> или обычным 💬. Условия использования — в .env.example."""
+    cid = ANON_NEW_MESSAGE_CUSTOM_EMOJI_ID
+    if cid and cid.isdigit():
+        return (
+            f'<b><tg-emoji emoji-id="{cid}">💬</tg-emoji> У тебя новое сообщение!</b>\n\n'
+        )
+    return "<b>💬 У тебя новое сообщение!</b>\n\n"
+
+
 def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TEXT) -> str:
-    """Текст для получателя: 💬, blockquote с текстом, «Свайпни» (кавычки рисует клиент)."""
-    head = "<b>💬 У тебя новое сообщение!</b>\n\n"
+    """Текст для получателя: эмодзи/кастом, blockquote с текстом, «Свайпни» (кавычки рисует клиент)."""
+    head = _anon_new_message_head_html()
     tail = "</blockquote>\n\n<i>↩️ Свайпни для ответа.</i>"
     open_bq = "<blockquote>"
     raw = (body or "").strip()
@@ -1275,7 +1289,7 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
     """Тот же визуальный ритм, что и у текстового анонима: заголовок → blockquote → подсказка свайпа."""
-    head = "<b>💬 У тебя новое сообщение!</b>\n\n"
+    head = _anon_new_message_head_html()
     tail = "</blockquote>\n\n<i>↩️ Свайпни для ответа.</i>"
     open_bq = "<blockquote>"
     raw = (body or "").strip()
