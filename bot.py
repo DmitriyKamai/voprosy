@@ -1288,17 +1288,16 @@ def format_anonymous_recipient_html(body: str | None, *, max_total: int = MAX_TE
 
 
 def format_anonymous_media_caption_html(body: str | None) -> str:
-    """Тот же визуальный ритм, что и у текстового анонима: заголовок → blockquote → подсказка свайпа."""
+    """Подпись к медиа: заголовок, подпись/📎 без blockquote — картинка уже отделяет контент."""
     head = _anon_new_message_head_html()
-    tail = "</blockquote>\n\n<i>↩️ Свайпни для ответа.</i>"
-    open_bq = "<blockquote>"
+    tail = "\n\n<i>↩️ Свайпни для ответа.</i>"
     raw = (body or "").strip()
     mid = html.escape(raw, quote=False) if raw else "📎"
-    overhead = len(head) + len(open_bq) + len(tail)
+    overhead = len(head) + len(tail)
     max_mid = max(0, TELEGRAM_MEDIA_CAPTION_MAX - overhead - 40)
     if len(mid) > max_mid:
         mid = clip(mid, max_mid)
-    return head + open_bq + mid + tail
+    return head + mid + tail
 
 
 def _anon_recipient_markup() -> InlineKeyboardMarkup:
