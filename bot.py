@@ -416,15 +416,17 @@ def keyboard_write_more_for_sender(
 
 
 def format_owner_reply_for_sender_html(
-    original_anon_snippet: str, owner_reply_text: str
+    original_anon_snippet: str,
+    owner_reply_text: str,
+    *,
+    quote_original: bool = True,
 ) -> str:
-    """Исходный аноним (цитата) + ответ без имени получателя — чат анонимный."""
-    o = clip(original_anon_snippet.strip() or "📎", 900)
+    """Ответ отправителю анонима. Если есть reply к его сообщению — цитату в HTML не дублируем."""
     body = clip(owner_reply_text, MAX_TEXT - 400)
-    return (
-        f"<blockquote>{html.escape(o)}</blockquote>\n\n"
-        f"{html.escape(body)}"
-    )
+    if not quote_original:
+        return html.escape(body)
+    o = clip(original_anon_snippet.strip() or "📎", 900)
+    return f"<blockquote>{html.escape(o)}</blockquote>\n{html.escape(body)}"
 
 
 def get_or_create_group_invite_row_id(chat_id: int) -> int:
@@ -1590,7 +1592,11 @@ async def handle_owner_reply_to_anonymous_sender(
 
     try:
         if msg.text and not msg.photo:
-            body_html = format_owner_reply_for_sender_html(original, msg.text or "")
+            body_html = format_owner_reply_for_sender_html(
+                original,
+                msg.text or "",
+                quote_original=sender_thread is None,
+            )
             sm: dict[str, Any] = {
                 "chat_id": anon_sender_user_id,
                 "text": body_html,
