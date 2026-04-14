@@ -237,6 +237,11 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ult_owner ON user_link_tokens(owner_user_id)"
         )
+        gi_cols = {row[1] for row in conn.execute("PRAGMA table_info(group_invites)")}
+        if "invite_token" not in gi_cols:
+            conn.execute(
+                "ALTER TABLE group_invites ADD COLUMN invite_token TEXT UNIQUE"
+            )
         conn.commit()
 
 
@@ -323,7 +328,7 @@ def log_user_link_click(owner_user_id: int) -> None:
 
 
 def log_group_link_click(group_chat_id: int) -> None:
-    """Переход по ссылке группы (?start=s…)."""
+    """Переход по ссылке группы (?start=sТОКЕН или legacy sЧисло)."""
     created = datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
@@ -433,29 +438,105 @@ def format_owner_reply_for_sender_html(
     return f"<blockquote>{html.escape(o)}</blockquote>\n{html.escape(body)}"
 
 
-def get_or_create_group_invite_row_id(chat_id: int) -> int:
-    """Короткий id для ссылки s{id} (строка в group_invites)."""
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO group_invites (chat_id) VALUES (?)",
-            (chat_id,),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT id FROM group_invites WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchone()
-        return int(row[0]) if row else 0
-
-
 def resolve_group_invite_row_id(invite_row_id: int) -> int | None:
-    """chat_id супергруппы по числу из ?start=s…"""
+    """chat_id по legacy-ссылке ?start=sЧИСЛО (id строки group_invites)."""
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT chat_id FROM group_invites WHERE id = ?",
             (invite_row_id,),
         ).fetchone()
         return int(row[0]) if row else None
+
+
+def resolve_group_invite_token(token: str) -> int | None:
+    """chat_id по непрозрачному токену в ?start=sТОКЕН."""
+    if not token or len(token) > 64:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT chat_id FROM group_invites WHERE invite_token = ?",
+            (token,),
+        ).fetchone()
+        return int(row[0]) if row else None
+
+
+def get_or_create_group_invite_start_param(chat_id: int) -> str:
+    """Параметр для ?start=…: s + случайный токен (как q… у личной ссылки). Старые ссылки sЧИСЛО остаются валидными."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, invite_token FROM group_invites WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if row:
+            row_id, tok = int(row[0]), row[1]
+            tok_s = str(tok).strip() if tok else ""
+            if tok_s and _stored_user_link_token_ok(tok_s):
+                return f"s{tok_s}"
+            for _ in range(64):
+                new_tok = _random_user_link_token()
+                try:
+                    conn.execute(
+                        "UPDATE group_invites SET invite_token = ? WHERE chat_id = ?",
+                        (new_tok, chat_id),
+                    )
+                    conn.commit()
+                    return f"s{new_tok}"
+                except sqlite3.IntegrityError:
+                    conn.rollback()
+                    continue
+            logger.warning(
+                "Не удалось выделить invite_token для chat_id=%s, fallback s%s",
+                chat_id,
+                row_id,
+            )
+            return f"s{row_id}"
+        for _ in range(64):
+            new_tok = _random_user_link_token()
+            try:
+                conn.execute(
+                    "INSERT INTO group_invites (chat_id, invite_token) VALUES (?, ?)",
+                    (chat_id, new_tok),
+                )
+                conn.commit()
+                return f"s{new_tok}"
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                continue
+        conn.execute(
+            "INSERT OR IGNORE INTO group_invites (chat_id) VALUES (?)",
+            (chat_id,),
+        )
+        conn.commit()
+        row2 = conn.execute(
+            "SELECT id FROM group_invites WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if not row2:
+            raise RuntimeError(f"group_invites: не удалось создать запись chat_id={chat_id}")
+        return f"s{int(row2[0])}"
+
+
+def _db_migrate_group_chat_id(old_chat_id: int, new_chat_id: int) -> None:
+    """После upgrade группы → супергруппы: один chat_id на другой во всех таблицах."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE group_invites SET chat_id = ? WHERE chat_id = ?",
+            (new_chat_id, old_chat_id),
+        )
+        conn.execute(
+            "UPDATE group_link_clicks SET group_chat_id = ? WHERE group_chat_id = ?",
+            (new_chat_id, old_chat_id),
+        )
+        conn.execute(
+            "UPDATE submissions SET recipient_chat_id = ? WHERE recipient_chat_id = ?",
+            (new_chat_id, old_chat_id),
+        )
+        conn.execute(
+            "UPDATE anon_reply_routes SET dest_chat_id = ? WHERE dest_chat_id = ?",
+            (new_chat_id, old_chat_id),
+        )
+        conn.commit()
+    logger.info("Чат мигрирован в БД: %s -> %s", old_chat_id, new_chat_id)
 
 
 def _msk_today_start_utc_iso() -> str:
@@ -846,7 +927,7 @@ def html_personal_link_block(full_link: str, display_link: str) -> str:
 
 
 def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
-    """qTOKEN → владелец только по токену в БД; s456 → id строки group_invites."""
+    """qTOKEN → user_id; sТОКЕН или legacy sЧИСЛО → chat_id группы."""
     p = arg.strip()
     if len(p) >= 2 and p[0] == "q":
         rest = p[1:]
@@ -854,8 +935,19 @@ def parse_deep_link_payload(arg: str) -> tuple[str, int] | None:
         if uid is not None:
             return ("user", uid)
         return None
-    if len(p) >= 2 and p[0] == "s" and p[1:].isdigit():
-        return ("group_invite", int(p[1:]))
+    if len(p) >= 2 and p[0] == "s":
+        rest = p[1:]
+        if not rest:
+            return None
+        if rest.isdigit():
+            cid = resolve_group_invite_row_id(int(rest))
+            if cid is not None:
+                return ("group_invite", cid)
+            return None
+        cid = resolve_group_invite_token(rest)
+        if cid is not None:
+            return ("group_invite", cid)
+        return None
     return None
 
 
@@ -882,13 +974,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 return
             if kind == "group_invite":
-                g_chat_id = resolve_group_invite_row_id(tid)
-                if g_chat_id is None:
-                    await msg.reply_text(
-                        "Ссылка недействительна или устарела. Попросите новую у администраторов чата.",
-                        reply_markup=ReplyKeyboardRemove(),
-                    )
-                    return
+                g_chat_id = tid
                 log_group_link_click(g_chat_id)
                 context.user_data["anon_target_chat_id"] = g_chat_id
                 context.user_data.pop("anon_target_user_id", None)
@@ -914,9 +1000,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     add_to_chat_href = f"https://t.me/{me.username}?startgroup=true"
 
     if chat.type in ("group", "supergroup"):
-        invite_row = get_or_create_group_invite_row_id(chat.id)
-        full_link = f"https://t.me/{me.username}?start=s{invite_row}"
-        display_link = f"t.me/{me.username}?start=s{invite_row}"
+        start_param = get_or_create_group_invite_start_param(chat.id)
+        full_link = f"https://t.me/{me.username}?start={start_param}"
+        display_link = f"t.me/{me.username}?start={start_param}"
         share_text = "Напиши анонимно в наш чат 💬"
         share_href = (
             "https://t.me/share/url?"
@@ -1085,15 +1171,15 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if chat.type in ("group", "supergroup"):
         gid = chat.id
-        invite_row = get_or_create_group_invite_row_id(gid)
+        start_param = get_or_create_group_invite_start_param(gid)
         with sqlite3.connect(DB_PATH) as conn:
             m_today = _count_messages_to_group(conn, gid, today_since)
             m_all = _count_messages_to_group(conn, gid, None)
             c_today = _count_group_link_clicks(conn, gid, today_since)
             c_all = _count_group_link_clicks(conn, gid, None)
             pop = _popularity_place_group(conn, gid)
-        full_link = f"https://t.me/{me.username}?start=s{invite_row}"
-        display_link = f"t.me/{me.username}?start=s{invite_row}"
+        full_link = f"https://t.me/{me.username}?start={start_param}"
+        display_link = f"t.me/{me.username}?start={start_param}"
         share_text = "Напиши анонимно в наш чат 💬"
         share_href = (
             "https://t.me/share/url?"
@@ -1711,6 +1797,38 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await msg.reply_text("Сообщение получено и передано.")
 
 
+class MigrateChatFilter(filters.MessageFilter):
+    """Служебное сообщение: миграция обычной группы в супергруппу (меняется chat_id)."""
+
+    def filter(self, message) -> bool:
+        if message is None:
+            return False
+        return bool(
+            message.migrate_to_chat_id is not None
+            or message.migrate_from_chat_id is not None
+        )
+
+
+MIGRATE_CHAT_FILTER = MigrateChatFilter()
+
+
+async def on_chat_migrate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    if not msg:
+        return
+    old_id: int | None = None
+    new_id: int | None = None
+    if msg.migrate_to_chat_id is not None:
+        old_id = msg.chat.id
+        new_id = msg.migrate_to_chat_id
+    elif msg.migrate_from_chat_id is not None:
+        old_id = msg.migrate_from_chat_id
+        new_id = msg.chat.id
+    if old_id is None or new_id is None or old_id == new_id:
+        return
+    _db_migrate_group_chat_id(old_id, new_id)
+
+
 def main() -> None:
     if not BOT_TOKEN:
         raise SystemExit("Укажите BOT_TOKEN в переменных окружения или в файле .env")
@@ -1723,6 +1841,7 @@ def main() -> None:
         )
 
     app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(MIGRATE_CHAT_FILTER, on_chat_migrate))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CallbackQueryHandler(anon_report_callback, pattern=f"^{CB_ANON_REPORT}$"))
